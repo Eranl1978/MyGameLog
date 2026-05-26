@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">EranGameZone</string>
+    <string name="title_activity_main">EranGameZone</string>
+    <string name="package_name">com.erangamezone.app</string>
+    <string name="custom_url_scheme">com.erangamezone.app</string>
+</resources>
