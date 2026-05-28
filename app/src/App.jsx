@@ -9,6 +9,7 @@ import {
   onSnapshot,
   query,
   serverTimestamp,
+  setDoc,
   updateDoc,
   waitForPendingWrites,
   where,
@@ -27,13 +28,17 @@ import {
 } from 'firebase/auth'
 import {
   BarChart3,
+  Bell,
   Bookmark,
   Check,
   ChevronDown,
+  Eye,
+  EyeOff,
   Gamepad2,
   Grid2X2,
   GripVertical,
   Home,
+  Inbox,
   Info,
   List,
   LogOut,
@@ -46,7 +51,9 @@ import {
   Sparkles,
   Star,
   Trash2,
+  UserPlus,
   UserRound,
+  Users,
   X,
 } from 'lucide-react'
 import './App.css'
@@ -65,8 +72,15 @@ import {
 } from './data/catalog'
 import { auth, db, gamesCollection, googleProvider } from './lib/firebase'
 
-const APP_VERSION = '1.0.20'
+const APP_VERSION = '1.0.22'
 const sharesCollection = 'shares'
+const profilesCollection = 'profiles'
+const friendshipsCollection = 'friendships'
+const shareRequestsCollection = 'shareRequests'
+const defaultPrivacy = {
+  shareListWithFriends: false,
+  shareBacklogWithFriends: false,
+}
 const PUBLIC_WEB_URL = 'https://erangamezone.netlify.app/'
 const DEFAULT_LANGUAGE = 'he'
 const languageOptions = [
@@ -93,6 +107,7 @@ const translations = {
     deletingAccount: 'מוחק חשבון...',
     discoverSubtitle: 'חפש משחקים חדשים והוסף אותם מהר',
     done: 'שוחקו',
+    friends: 'חברים',
     general: 'כללי',
     grid: 'גריד',
     home: 'בית',
@@ -137,6 +152,7 @@ const translations = {
     deletingAccount: 'Deleting account...',
     discoverSubtitle: 'Search new games and add them quickly',
     done: 'Played',
+    friends: 'Friends',
     general: 'General',
     grid: 'Grid',
     home: 'Home',
@@ -181,6 +197,7 @@ const translations = {
     deletingAccount: 'جار حذف الحساب...',
     discoverSubtitle: 'ابحث عن ألعاب جديدة وأضفها بسرعة',
     done: 'تم لعبها',
+    friends: 'الأصدقاء',
     general: 'عام',
     grid: 'شبكة',
     home: 'الرئيسية',
@@ -215,6 +232,14 @@ function App() {
   const [authLoading, setAuthLoading] = useState(true)
   const [gamesLoading, setGamesLoading] = useState(false)
   const [games, setGames] = useState([])
+  const [profile, setProfile] = useState(null)
+  const [friendships, setFriendships] = useState([])
+  const [friendProfiles, setFriendProfiles] = useState({})
+  const [incomingShareRequests, setIncomingShareRequests] = useState([])
+  const [outgoingShareRequests, setOutgoingShareRequests] = useState([])
+  const [selectedFriendId, setSelectedFriendId] = useState('')
+  const [friendGames, setFriendGames] = useState([])
+  const [friendGamesLoading, setFriendGamesLoading] = useState(false)
   const [screen, setScreen] = useState('home')
   const [search, setSearch] = useState('')
   const [platformFilter, setPlatformFilter] = useState('all')
@@ -313,6 +338,13 @@ function App() {
       setAuthLoading(false)
       if (!currentUser) {
         setGames([])
+        setProfile(null)
+        setFriendships([])
+        setFriendProfiles({})
+        setIncomingShareRequests([])
+        setOutgoingShareRequests([])
+        setSelectedFriendId('')
+        setFriendGames([])
         setGamesLoading(false)
       }
     })
@@ -343,6 +375,132 @@ function App() {
     return unsubscribe
   }, [user])
 
+  useEffect(() => {
+    if (!user) return undefined
+
+    const profileRef = doc(db, profilesCollection, user.uid)
+    syncUserProfile(user).catch(console.error)
+
+    const unsubscribe = onSnapshot(
+      profileRef,
+      (snapshot) => {
+        setProfile(normalizeProfile(user.uid, snapshot.data(), user))
+      },
+      (error) => console.error(error),
+    )
+
+    return unsubscribe
+  }, [user])
+
+  useEffect(() => {
+    if (!user) return undefined
+
+    const profileRef = doc(db, profilesCollection, user.uid)
+    const updatePresence = () => {
+      setDoc(profileRef, { lastSeenAt: Date.now(), updatedAt: Date.now() }, { merge: true }).catch(console.error)
+    }
+
+    updatePresence()
+    const interval = window.setInterval(updatePresence, 60000)
+    return () => window.clearInterval(interval)
+  }, [user])
+
+  useEffect(() => {
+    if (!user) return undefined
+
+    const friendshipsQuery = query(collection(db, friendshipsCollection), where('users', 'array-contains', user.uid))
+    const unsubscribe = onSnapshot(
+      friendshipsQuery,
+      (snapshot) => {
+        const nextFriendships = snapshot.docs.map(normalizeFriendship)
+        setFriendships(nextFriendships)
+        if (!nextFriendships.length) setFriendProfiles({})
+      },
+      (error) => console.error(error),
+    )
+
+    return unsubscribe
+  }, [user])
+
+  useEffect(() => {
+    if (!user) return undefined
+
+    const incomingQuery = query(collection(db, shareRequestsCollection), where('ownerId', '==', user.uid))
+    const unsubscribeIncoming = onSnapshot(
+      incomingQuery,
+      (snapshot) => {
+        setIncomingShareRequests(
+          snapshot.docs.map(normalizeShareRequest).filter((request) => request.status === 'pending'),
+        )
+      },
+      (error) => console.error(error),
+    )
+
+    const outgoingQuery = query(collection(db, shareRequestsCollection), where('requesterId', '==', user.uid))
+    const unsubscribeOutgoing = onSnapshot(
+      outgoingQuery,
+      (snapshot) => {
+        setOutgoingShareRequests(
+          snapshot.docs.map(normalizeShareRequest).filter((request) => request.status === 'pending'),
+        )
+      },
+      (error) => console.error(error),
+    )
+
+    return () => {
+      unsubscribeIncoming()
+      unsubscribeOutgoing()
+    }
+  }, [user])
+
+  useEffect(() => {
+    if (!user) return
+    const friendIds = [...new Set(friendships.map((friendship) => getOtherUserId(friendship, user.uid)).filter(Boolean))]
+    if (!friendIds.length) {
+      return
+    }
+
+    let cancelled = false
+    Promise.all(
+      friendIds.map(async (friendId) => {
+        const snapshot = await getDoc(doc(db, profilesCollection, friendId))
+        return normalizeProfile(friendId, snapshot.data())
+      }),
+    )
+      .then((profiles) => {
+        if (cancelled) return
+        setFriendProfiles(Object.fromEntries(profiles.map((item) => [item.uid, item])))
+      })
+      .catch(console.error)
+
+    return () => {
+      cancelled = true
+    }
+  }, [friendships, user])
+
+  useEffect(() => {
+    if (!user) return
+
+    const nextStats = {
+      gamesCount: games.length,
+      backlogCount: games.filter((game) => game.backlog).length,
+      doneCount: games.filter((game) => game.status === 'done').length,
+    }
+
+    setDoc(
+      doc(db, profilesCollection, user.uid),
+      {
+        displayName: user.displayName || user.email || 'MyGameLog',
+        email: user.email || '',
+        emailLower: (user.email || '').toLowerCase(),
+        photoURL: user.photoURL || '',
+        stats: nextStats,
+        updatedAt: Date.now(),
+      },
+      { merge: true },
+    ).catch(console.error)
+  }, [games, user])
+
   const filteredGames = useMemo(() => {
     const q = search.trim().toLowerCase()
     return games.filter((game) => {
@@ -366,6 +524,11 @@ function App() {
     () => games.find((game) => game.id === selectedId) || null,
     [games, selectedId],
   )
+  const selectedFriendship = useMemo(
+    () => friendships.find((friendship) => getOtherUserId(friendship, user?.uid) === selectedFriendId) || null,
+    [friendships, selectedFriendId, user],
+  )
+  const selectedFriendProfile = selectedFriendId ? friendProfiles[selectedFriendId] || null : null
 
   const showToast = (message) => {
     setToast(message)
@@ -432,6 +595,182 @@ function App() {
     showToast('קישור בקלוג מוכן')
   }
 
+  const searchFriendByEmail = async (email) => {
+    const emailLower = email.trim().toLowerCase()
+    if (!emailLower) return null
+
+    const profilesQuery = query(collection(db, profilesCollection), where('emailLower', '==', emailLower))
+    const snapshot = await getDocs(profilesQuery)
+    const match = snapshot.docs.map((item) => normalizeProfile(item.id, item.data()))[0] || null
+    if (!match) return null
+    if (match.uid === user.uid) throw new Error('זה החשבון שלך')
+    return match
+  }
+
+  const sendFriendRequest = async (targetProfile) => {
+    const friendship = friendships.find((item) => getOtherUserId(item, user.uid) === targetProfile.uid)
+    if (friendship?.status === 'accepted') {
+      showToast('אתם כבר חברים')
+      return
+    }
+    if (friendship?.status === 'pending') {
+      showToast('כבר קיימת בקשת חברות')
+      return
+    }
+
+    const permissions = createFriendPermissions(user.uid, targetProfile.uid, profile)
+    await setDoc(doc(db, friendshipsCollection, getFriendshipId(user.uid, targetProfile.uid)), {
+      users: [user.uid, targetProfile.uid].sort(),
+      requesterId: user.uid,
+      recipientId: targetProfile.uid,
+      status: 'pending',
+      permissions,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    })
+    showToast('בקשת חברות נשלחה')
+  }
+
+  const acceptFriendRequest = async (friendship) => {
+    const otherId = getOtherUserId(friendship, user.uid)
+    const permissions = {
+      ...(friendship.permissions || {}),
+      [user.uid]: getProfilePrivacyPermissions(profile),
+    }
+
+    await updateDoc(doc(db, friendshipsCollection, friendship.id), {
+      status: 'accepted',
+      permissions,
+      acceptedAt: Date.now(),
+      updatedAt: Date.now(),
+    })
+    showToast('בקשת החברות אושרה')
+
+    if (otherId) {
+      setScreen('friends')
+    }
+  }
+
+  const rejectFriendRequest = async (friendship) => {
+    await deleteDoc(doc(db, friendshipsCollection, friendship.id))
+    showToast('בקשת החברות נדחתה')
+  }
+
+  const removeFriend = async (friendship) => {
+    if (!confirm('להסיר את החבר?')) return
+    await deleteDoc(doc(db, friendshipsCollection, friendship.id))
+    if (selectedFriendId === getOtherUserId(friendship, user.uid)) {
+      setSelectedFriendId('')
+      setFriendGames([])
+    }
+    showToast('החבר הוסר')
+  }
+
+  const openFriendLibrary = async (friendship) => {
+    const friendId = getOtherUserId(friendship, user.uid)
+    if (!friendId) return
+
+    setSelectedFriendId(friendId)
+    setFriendGames([])
+    if (!canViewFriendScope(friendship, friendId, 'list') && !canViewFriendScope(friendship, friendId, 'backlog')) {
+      return
+    }
+
+    setFriendGamesLoading(true)
+    try {
+      const friendGamesQuery = query(collection(db, gamesCollection), where('userId', '==', friendId))
+      const snapshot = await getDocs(friendGamesQuery)
+      const nextGames = snapshot.docs.map(normalizeGame)
+      nextGames.sort((a, b) => a.name.localeCompare(b.name, 'he'))
+      setFriendGames(nextGames)
+    } catch (error) {
+      console.error(error)
+      alert(`לא הצלחתי לטעון את הרשימה של החבר: ${getErrorMessage(error)}`)
+    } finally {
+      setFriendGamesLoading(false)
+    }
+  }
+
+  const requestFriendAccess = async (ownerId, scope) => {
+    if (!ownerId || ownerId === user.uid) return
+    const requestId = getShareRequestId(user.uid, ownerId, scope)
+    await setDoc(doc(db, shareRequestsCollection, requestId), {
+      requesterId: user.uid,
+      ownerId,
+      scope,
+      status: 'pending',
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    })
+    showToast('בקשת שיתוף נשלחה')
+  }
+
+  const approveShareRequest = async (request) => {
+    const friendshipId = getFriendshipId(user.uid, request.requesterId)
+    const friendship = friendships.find((item) => item.id === friendshipId)
+    if (!friendship || friendship.status !== 'accepted') {
+      alert('צריך קודם להיות חברים כדי לאשר שיתוף')
+      return
+    }
+
+    const nextPermissions = {
+      ...(friendship.permissions || {}),
+      [user.uid]: {
+        ...getProfilePrivacyPermissions(profile),
+        ...(friendship.permissions?.[user.uid] || {}),
+        [request.scope]: true,
+      },
+    }
+
+    const batch = writeBatch(db)
+    batch.update(doc(db, friendshipsCollection, friendshipId), {
+      permissions: nextPermissions,
+      updatedAt: Date.now(),
+    })
+    batch.update(doc(db, shareRequestsCollection, request.id), {
+      status: 'approved',
+      resolvedAt: Date.now(),
+      updatedAt: Date.now(),
+    })
+    await batch.commit()
+    showToast('אישרת שיתוף')
+  }
+
+  const rejectShareRequest = async (request) => {
+    await updateDoc(doc(db, shareRequestsCollection, request.id), {
+      status: 'rejected',
+      resolvedAt: Date.now(),
+      updatedAt: Date.now(),
+    })
+    showToast('בקשת השיתוף נדחתה')
+  }
+
+  const updatePrivacySettings = async (nextPrivacy) => {
+    const currentPrivacy = getProfilePrivacy(profile)
+    const privacy = { ...currentPrivacy, ...nextPrivacy }
+    const batch = writeBatch(db)
+
+    batch.set(doc(db, profilesCollection, user.uid), {
+      privacy,
+      updatedAt: Date.now(),
+    }, { merge: true })
+
+    friendships
+      .filter((friendship) => friendship.status === 'accepted')
+      .forEach((friendship) => {
+        batch.update(doc(db, friendshipsCollection, friendship.id), {
+          permissions: {
+            ...(friendship.permissions || {}),
+            [user.uid]: getProfilePrivacyPermissions({ privacy }),
+          },
+          updatedAt: Date.now(),
+        })
+      })
+
+    await batch.commit()
+    showToast('הגדרות השיתוף נשמרו')
+  }
+
   const login = async () => {
     try {
       if (isNativeApp()) {
@@ -473,6 +812,7 @@ function App() {
     try {
       await reauthenticateCurrentUser()
       await deleteUserGames(user.uid)
+      await deleteUserSocialData(user.uid)
       await deleteUser(auth.currentUser)
       if (isNativeApp()) await FirebaseAuthentication.signOut().catch(console.info)
       setScreen('home')
@@ -605,6 +945,43 @@ function App() {
           onOpenGame={setSelectedId}
           t={t}
         />
+      ) : screen === 'friends' ? (
+        selectedFriendId ? (
+          <FriendLibraryScreen
+            friend={selectedFriendProfile}
+            friendship={selectedFriendship}
+            games={friendGames}
+            key={selectedFriendId}
+            loading={friendGamesLoading}
+            onBack={() => {
+              setSelectedFriendId('')
+              setFriendGames([])
+            }}
+            onRequestAccess={requestFriendAccess}
+            outgoingShareRequests={outgoingShareRequests}
+            t={t}
+            userId={user.uid}
+          />
+        ) : (
+          <FriendsScreen
+            friendProfiles={friendProfiles}
+            friendships={friendships}
+            incomingShareRequests={incomingShareRequests}
+            onAcceptFriend={acceptFriendRequest}
+            onApproveShareRequest={approveShareRequest}
+            onOpenFriend={openFriendLibrary}
+            onRejectFriend={rejectFriendRequest}
+            onRejectShareRequest={rejectShareRequest}
+            onRemoveFriend={removeFriend}
+            onRequestAccess={requestFriendAccess}
+            onSearchFriend={searchFriendByEmail}
+            onSendFriendRequest={sendFriendRequest}
+            outgoingShareRequests={outgoingShareRequests}
+            profile={profile}
+            t={t}
+            user={user}
+          />
+        )
       ) : screen === 'stats' ? (
         <StatsScreen games={games} onOpenGame={setSelectedId} t={t} />
       ) : (
@@ -616,6 +993,8 @@ function App() {
           onDeleteAccount={deleteAccount}
           onLanguageChange={setLanguage}
           onLogout={logout}
+          onPrivacyChange={updatePrivacySettings}
+          profile={profile}
           t={t}
           user={user}
         />
@@ -1362,6 +1741,437 @@ function DiscoveryScreen({ games, onAddGame, onOpenGame, t }) {
   )
 }
 
+function FriendsScreen({
+  friendProfiles,
+  friendships,
+  incomingShareRequests,
+  onAcceptFriend,
+  onApproveShareRequest,
+  onOpenFriend,
+  onRejectFriend,
+  onRejectShareRequest,
+  onRemoveFriend,
+  onRequestAccess,
+  onSearchFriend,
+  onSendFriendRequest,
+  outgoingShareRequests,
+  profile,
+  t,
+  user,
+}) {
+  const [email, setEmail] = useState('')
+  const [searching, setSearching] = useState(false)
+  const [searchResult, setSearchResult] = useState(null)
+  const [searchMessage, setSearchMessage] = useState('')
+
+  const acceptedFriends = friendships.filter((friendship) => friendship.status === 'accepted')
+  const incomingFriendRequests = friendships.filter(
+    (friendship) => friendship.status === 'pending' && friendship.recipientId === user.uid,
+  )
+  const outgoingFriendRequests = friendships.filter(
+    (friendship) => friendship.status === 'pending' && friendship.requesterId === user.uid,
+  )
+
+  const submitSearch = async (event) => {
+    event.preventDefault()
+    setSearching(true)
+    setSearchResult(null)
+    setSearchMessage('')
+    try {
+      const result = await onSearchFriend(email)
+      if (!result) {
+        setSearchMessage('לא מצאתי משתמש עם המייל הזה')
+        return
+      }
+      setSearchResult(result)
+    } catch (error) {
+      setSearchMessage(getErrorMessage(error))
+    } finally {
+      setSearching(false)
+    }
+  }
+
+  const sendRequest = async () => {
+    if (!searchResult) return
+    await onSendFriendRequest(searchResult)
+    setSearchResult(null)
+    setEmail('')
+  }
+
+  return (
+    <section className="screen">
+      <header className="topbar compact">
+        <div className="brand-row">
+          <img className="brand-icon" src="/mgl.png" alt="" />
+          <div>
+            <Logo />
+            <p className="brand-sub">חברים, בקשות והרשאות צפייה</p>
+          </div>
+        </div>
+      </header>
+
+      <section className="friends-hero">
+        <span className="friends-hero-icon">
+          <Users size={25} />
+        </span>
+        <div>
+          <span>{t('friends')}</span>
+          <h1>מה משחקים אצל החברים?</h1>
+          <p>הוסף חברים במייל, אשר בקשות וצפה ברשימות רק כשיש אישור שיתוף.</p>
+        </div>
+      </section>
+
+      <form className="friend-search" onSubmit={submitSearch}>
+        <Search size={18} />
+        <input
+          dir="ltr"
+          value={email}
+          onChange={(event) => setEmail(event.target.value)}
+          placeholder="friend@email.com"
+          autoComplete="email"
+          spellCheck="false"
+          type="email"
+        />
+        <button type="submit" disabled={searching || !email.trim()}>
+          {searching ? 'מחפש...' : 'חפש'}
+        </button>
+      </form>
+
+      {searchMessage ? <div className="friend-note">{searchMessage}</div> : null}
+      {searchResult ? (
+        <article className="friend-card highlighted">
+          <FriendIdentity profile={searchResult} />
+          <button className="friend-action primary" type="button" onClick={sendRequest}>
+            <UserPlus size={17} />
+            שלח בקשה
+          </button>
+        </article>
+      ) : null}
+
+      {incomingFriendRequests.length ? (
+        <section className="friends-panel">
+          <h2>
+            <Inbox size={18} />
+            בקשות חברות
+          </h2>
+          <div className="friend-list">
+            {incomingFriendRequests.map((friendship) => {
+              const requester = friendProfiles[friendship.requesterId] || createFallbackProfile(friendship.requesterId)
+              return (
+                <article className="friend-card" key={friendship.id}>
+                  <FriendIdentity profile={requester} />
+                  <div className="friend-actions">
+                    <button className="friend-action primary" type="button" onClick={() => onAcceptFriend(friendship)}>
+                      <Check size={17} />
+                      אשר
+                    </button>
+                    <button className="friend-action" type="button" onClick={() => onRejectFriend(friendship)}>
+                      <X size={17} />
+                      דחה
+                    </button>
+                  </div>
+                </article>
+              )
+            })}
+          </div>
+        </section>
+      ) : null}
+
+      {incomingShareRequests.length ? (
+        <section className="friends-panel">
+          <h2>
+            <Bell size={18} />
+            בקשות שיתוף
+          </h2>
+          <div className="friend-list">
+            {incomingShareRequests.map((request) => {
+              const requester = friendProfiles[request.requesterId] || createFallbackProfile(request.requesterId)
+              return (
+                <article className="friend-card" key={request.id}>
+                  <FriendIdentity profile={requester} />
+                  <span className="share-request-text">
+                    מבקש לראות את {request.scope === 'backlog' ? t('backlog') : 'הרשימה'}
+                  </span>
+                  <div className="friend-actions">
+                    <button className="friend-action primary" type="button" onClick={() => onApproveShareRequest(request)}>
+                      <Eye size={17} />
+                      אשר
+                    </button>
+                    <button className="friend-action" type="button" onClick={() => onRejectShareRequest(request)}>
+                      <EyeOff size={17} />
+                      דחה
+                    </button>
+                  </div>
+                </article>
+              )
+            })}
+          </div>
+        </section>
+      ) : null}
+
+      {outgoingFriendRequests.length ? (
+        <section className="friends-panel subtle">
+          <h2>
+            <UserPlus size={18} />
+            ממתין לאישור
+          </h2>
+          <div className="friend-list">
+            {outgoingFriendRequests.map((friendship) => {
+              const friendId = getOtherUserId(friendship, user.uid)
+              return (
+                <article className="friend-card" key={friendship.id}>
+                  <FriendIdentity profile={friendProfiles[friendId] || createFallbackProfile(friendId)} />
+                  <span className="friend-status-pill">נשלחה בקשה</span>
+                </article>
+              )
+            })}
+          </div>
+        </section>
+      ) : null}
+
+      <section className="friends-panel">
+        <h2>
+          <Users size={18} />
+          החברים שלי
+        </h2>
+        {acceptedFriends.length ? (
+          <div className="friend-list">
+            {acceptedFriends.map((friendship) => {
+              const friendId = getOtherUserId(friendship, user.uid)
+              const friend = friendProfiles[friendId] || createFallbackProfile(friendId)
+              return (
+                <FriendCard
+                  friendship={friendship}
+                  key={friendship.id}
+                  onOpen={() => onOpenFriend(friendship)}
+                  onRemove={() => onRemoveFriend(friendship)}
+                  onRequestAccess={(scope) => onRequestAccess(friendId, scope)}
+                  outgoingShareRequests={outgoingShareRequests}
+                  profile={friend}
+                  profileOwnerId={friendId}
+                  t={t}
+                  userId={user.uid}
+                />
+              )
+            })}
+          </div>
+        ) : (
+          <div className="empty-state compact">
+            <Users size={38} />
+            <strong>אין חברים עדיין</strong>
+            <span>חפש לפי מייל ושלח בקשת חברות.</span>
+          </div>
+        )}
+      </section>
+
+      <section className="friends-panel subtle">
+        <h2>
+          <ShieldCheck size={18} />
+          מה אתה משתף כרגע
+        </h2>
+        <div className="privacy-summary">
+          <span className={getProfilePrivacy(profile).shareListWithFriends ? 'active' : ''}>
+            {getProfilePrivacy(profile).shareListWithFriends ? <Eye size={16} /> : <EyeOff size={16} />}
+            רשימת משחקים
+          </span>
+          <span className={getProfilePrivacy(profile).shareBacklogWithFriends ? 'active' : ''}>
+            {getProfilePrivacy(profile).shareBacklogWithFriends ? <Eye size={16} /> : <EyeOff size={16} />}
+            {t('backlog')}
+          </span>
+        </div>
+      </section>
+    </section>
+  )
+}
+
+function FriendCard({
+  friendship,
+  onOpen,
+  onRemove,
+  onRequestAccess,
+  outgoingShareRequests,
+  profile,
+  profileOwnerId,
+  t,
+  userId,
+}) {
+  const canViewList = canViewFriendScope(friendship, profileOwnerId, 'list')
+  const canViewBacklog = canViewFriendScope(friendship, profileOwnerId, 'backlog')
+  const listPending = hasPendingAccessRequest(outgoingShareRequests, profileOwnerId, 'list')
+  const backlogPending = hasPendingAccessRequest(outgoingShareRequests, profileOwnerId, 'backlog')
+
+  return (
+    <article className="friend-card">
+      <FriendIdentity profile={profile} />
+      <div className="friend-permissions">
+        <span className={canViewList ? 'active' : ''}>
+          {canViewList ? <Eye size={15} /> : <EyeOff size={15} />}
+          רשימה
+        </span>
+        <span className={canViewBacklog ? 'active' : ''}>
+          {canViewBacklog ? <Eye size={15} /> : <EyeOff size={15} />}
+          {t('backlog')}
+        </span>
+      </div>
+      <div className="friend-actions">
+        <button className="friend-action primary" type="button" onClick={onOpen}>
+          פתח
+        </button>
+        {!canViewList ? (
+          <button className="friend-action" type="button" onClick={() => onRequestAccess('list')} disabled={listPending}>
+            {listPending ? 'נשלח' : 'בקש רשימה'}
+          </button>
+        ) : null}
+        {!canViewBacklog ? (
+          <button className="friend-action" type="button" onClick={() => onRequestAccess('backlog')} disabled={backlogPending}>
+            {backlogPending ? 'נשלח' : 'בקש בקלוג'}
+          </button>
+        ) : null}
+        <button className="friend-action danger-lite" type="button" onClick={onRemove}>
+          הסר
+        </button>
+      </div>
+      {friendship.requesterId === userId ? <span className="friend-owner-note">אתה שלחת את בקשת החברות</span> : null}
+    </article>
+  )
+}
+
+function FriendLibraryScreen({
+  friend,
+  friendship,
+  games,
+  loading,
+  onBack,
+  onRequestAccess,
+  outgoingShareRequests,
+  t,
+}) {
+  const friendId = friend?.uid || ''
+  const canViewList = friendship && canViewFriendScope(friendship, friendId, 'list')
+  const canViewBacklog = friendship && canViewFriendScope(friendship, friendId, 'backlog')
+  const [view, setView] = useState(canViewList ? 'list' : 'backlog')
+  const activeView = view === 'list' && !canViewList && canViewBacklog ? 'backlog' : view
+  const visibleGames = activeView === 'backlog'
+    ? sortBacklogGames(games.filter((game) => game.backlog))
+    : games
+  const listPending = hasPendingAccessRequest(outgoingShareRequests, friendId, 'list')
+  const backlogPending = hasPendingAccessRequest(outgoingShareRequests, friendId, 'backlog')
+
+  return (
+    <section className="screen">
+      <header className="topbar compact">
+        <button className="icon-btn" type="button" onClick={onBack} title="חזור">
+          <ChevronDown size={20} />
+        </button>
+        <div className="brand-row">
+          <FriendAvatar profile={friend || createFallbackProfile(friendId)} />
+          <div>
+            <h1 className="friend-page-title">{friend?.displayName || 'חבר'}</h1>
+            <p className="brand-sub">{friend?.email || 'MyGameLog'}</p>
+          </div>
+        </div>
+      </header>
+
+      <div className="friend-library-tabs">
+        <button
+          className={activeView === 'list' ? 'active' : ''}
+          type="button"
+          onClick={() => setView('list')}
+          disabled={!canViewList}
+        >
+          <List size={17} />
+          רשימה
+        </button>
+        <button
+          className={activeView === 'backlog' ? 'active' : ''}
+          type="button"
+          onClick={() => setView('backlog')}
+          disabled={!canViewBacklog}
+        >
+          <Bookmark size={17} />
+          {t('backlog')}
+        </button>
+      </div>
+
+      {!canViewList || !canViewBacklog ? (
+        <div className="friend-access-box">
+          {!canViewList ? (
+            <button type="button" onClick={() => onRequestAccess(friendId, 'list')} disabled={listPending}>
+              {listPending ? 'בקשת רשימה נשלחה' : 'בקש לראות רשימה'}
+            </button>
+          ) : null}
+          {!canViewBacklog ? (
+            <button type="button" onClick={() => onRequestAccess(friendId, 'backlog')} disabled={backlogPending}>
+              {backlogPending ? 'בקשת בקלוג נשלחה' : 'בקש לראות בקלוג'}
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+
+      {loading ? (
+        <div className="empty-state">
+          <Sparkles size={42} />
+          <strong>טוען רשימה...</strong>
+        </div>
+      ) : visibleGames.length ? (
+        <div className="friend-games-grid">
+          {visibleGames.map((game, index) => (
+            <FriendGameCard game={game} key={game.id} rank={activeView === 'backlog' ? index + 1 : null} t={t} />
+          ))}
+        </div>
+      ) : (
+        <div className="empty-state">
+          <Gamepad2 size={42} />
+          <strong>{canViewList || canViewBacklog ? 'אין משחקים להצגה' : 'אין הרשאת צפייה עדיין'}</strong>
+          <span>{canViewList || canViewBacklog ? 'החבר עוד לא הוסיף משחקים כאן.' : 'אפשר לשלוח בקשת שיתוף לחבר.'}</span>
+        </div>
+      )}
+    </section>
+  )
+}
+
+function FriendIdentity({ profile }) {
+  return (
+    <div className="friend-identity">
+      <FriendAvatar profile={profile} />
+      <span>
+        <strong>{profile.displayName || 'חבר MyGameLog'}</strong>
+        <small dir="ltr">{profile.email || profile.uid}</small>
+        <em className={isProfileOnline(profile) ? 'online' : ''}>{formatLastSeen(profile.lastSeenAt)}</em>
+      </span>
+    </div>
+  )
+}
+
+function FriendAvatar({ profile }) {
+  const [failed, setFailed] = useState(false)
+  const initial = (profile?.displayName || profile?.email || 'M').trim().charAt(0).toUpperCase()
+
+  if (profile?.photoURL && !failed) {
+    return <img className="friend-avatar" src={profile.photoURL} alt="" onError={() => setFailed(true)} referrerPolicy="no-referrer" />
+  }
+
+  return <span className="friend-avatar fallback">{initial}</span>
+}
+
+function FriendGameCard({ game, rank, t }) {
+  return (
+    <article className="friend-game-card">
+      {rank ? <span className="shared-rank">{rank}</span> : null}
+      <GameThumb game={game} cover />
+      <div className="friend-game-body">
+        <strong>{game.name}</strong>
+        <small>{game.platform} {game.dev ? `· ${game.dev}` : ''}</small>
+        <span>
+          {game.backlog ? <em>{t('backlog')}</em> : null}
+          <StatusBadge status={game.status} t={t} />
+          {game.stars ? <small className="stars-text">{starText(game.stars)}</small> : null}
+        </span>
+      </div>
+    </article>
+  )
+}
+
 function StatsScreen({ games, onOpenGame, t }) {
   const owned = games.filter((game) => game.status === 'own' || game.status === 'done')
   const want = games.filter((game) => game.status === 'want')
@@ -1444,6 +2254,8 @@ function SettingsScreen({
   onDeleteAccount,
   onLanguageChange,
   onLogout,
+  onPrivacyChange,
+  profile,
   t,
   user,
 }) {
@@ -1453,6 +2265,12 @@ function SettingsScreen({
   const photoFailed = Boolean(photoURL && failedPhotoUrl === photoURL)
   const isGoogleUser = user.providerData?.some((provider) => provider.providerId === 'google.com')
     || /@gmail\.com$/i.test(user.email || '')
+  const privacy = getProfilePrivacy(profile)
+  const changePrivacy = (nextPrivacy) => {
+    onPrivacyChange(nextPrivacy).catch((error) => {
+      alert(`לא הצלחתי לעדכן פרטיות: ${getErrorMessage(error)}`)
+    })
+  }
 
   return (
     <section className="screen">
@@ -1517,6 +2335,28 @@ function SettingsScreen({
 
         <section className="settings-panel">
           <h2>{t('privacy')}</h2>
+          <label className="settings-toggle">
+            <input
+              checked={privacy.shareListWithFriends}
+              type="checkbox"
+              onChange={(event) => changePrivacy({ shareListWithFriends: event.target.checked })}
+            />
+            <span>
+              <strong>חברים יכולים לראות את הרשימה שלי</strong>
+              <small>רק חברים שאישרת יראו את רשימת המשחקים שלך.</small>
+            </span>
+          </label>
+          <label className="settings-toggle">
+            <input
+              checked={privacy.shareBacklogWithFriends}
+              type="checkbox"
+              onChange={(event) => changePrivacy({ shareBacklogWithFriends: event.target.checked })}
+            />
+            <span>
+              <strong>חברים יכולים לראות את הבקלוג שלי</strong>
+              <small>אפשר לכבות ולהדליק בכל רגע.</small>
+            </span>
+          </label>
           <div className="info-row">
             <ShieldCheck size={20} />
             <span>{t('privacyStorage')}</span>
@@ -1960,6 +2800,10 @@ function BottomNav({ screen, setScreen, t }) {
         <Bookmark size={22} />
         <span>{t('backlog')}</span>
       </button>
+      <button className={screen === 'friends' ? 'active' : ''} type="button" onClick={() => setScreen('friends')}>
+        <Users size={22} />
+        <span>{t('friends')}</span>
+      </button>
       <button className={screen === 'discover' ? 'active' : ''} type="button" onClick={() => setScreen('discover')}>
         <Search size={22} />
         <span>{t('search')}</span>
@@ -2340,6 +3184,154 @@ function getStatusLabel(status, t) {
   if (status === 'want') return t('want')
   if (status === 'done') return t('done')
   return t('owned')
+}
+
+async function syncUserProfile(user) {
+  const profileRef = doc(db, profilesCollection, user.uid)
+  const snapshot = await getDoc(profileRef)
+  const existing = snapshot.exists() ? snapshot.data() : {}
+  const privacy = getProfilePrivacy(existing)
+
+  await setDoc(profileRef, {
+    uid: user.uid,
+    displayName: user.displayName || existing.displayName || user.email || 'MyGameLog',
+    email: user.email || existing.email || '',
+    emailLower: (user.email || existing.email || '').toLowerCase(),
+    photoURL: user.photoURL || existing.photoURL || '',
+    privacy,
+    stats: existing.stats || { gamesCount: 0, backlogCount: 0, doneCount: 0 },
+    createdAt: existing.createdAt || Date.now(),
+    lastSeenAt: Date.now(),
+    updatedAt: Date.now(),
+  }, { merge: true })
+}
+
+function normalizeProfile(uid, data = {}, fallbackUser = null) {
+  return {
+    uid,
+    displayName: data.displayName || fallbackUser?.displayName || fallbackUser?.email || 'MyGameLog',
+    email: data.email || fallbackUser?.email || '',
+    emailLower: (data.emailLower || data.email || fallbackUser?.email || '').toLowerCase(),
+    photoURL: data.photoURL || fallbackUser?.photoURL || '',
+    privacy: getProfilePrivacy(data),
+    stats: data.stats || { gamesCount: 0, backlogCount: 0, doneCount: 0 },
+    lastSeenAt: Number(data.lastSeenAt) || 0,
+  }
+}
+
+function createFallbackProfile(uid) {
+  return {
+    uid,
+    displayName: 'חבר MyGameLog',
+    email: '',
+    emailLower: '',
+    photoURL: '',
+    privacy: { ...defaultPrivacy },
+    stats: { gamesCount: 0, backlogCount: 0, doneCount: 0 },
+    lastSeenAt: 0,
+  }
+}
+
+function getProfilePrivacy(profile) {
+  return {
+    shareListWithFriends: Boolean(profile?.privacy?.shareListWithFriends),
+    shareBacklogWithFriends: Boolean(profile?.privacy?.shareBacklogWithFriends),
+  }
+}
+
+function getProfilePrivacyPermissions(profile) {
+  const privacy = getProfilePrivacy(profile)
+  return {
+    list: privacy.shareListWithFriends,
+    backlog: privacy.shareBacklogWithFriends,
+  }
+}
+
+function getFriendshipId(userId, otherId) {
+  return [userId, otherId].sort().join('__')
+}
+
+function getShareRequestId(requesterId, ownerId, scope) {
+  return `${requesterId}__${ownerId}__${scope}`
+}
+
+function createFriendPermissions(userId, otherId, profile) {
+  return {
+    [userId]: getProfilePrivacyPermissions(profile),
+    [otherId]: { list: false, backlog: false },
+  }
+}
+
+function normalizeFriendship(item) {
+  const data = item.data()
+  return {
+    id: item.id,
+    users: Array.isArray(data.users) ? data.users : [],
+    requesterId: data.requesterId || '',
+    recipientId: data.recipientId || '',
+    status: data.status || 'pending',
+    permissions: data.permissions || {},
+    createdAt: data.createdAt || 0,
+    updatedAt: data.updatedAt || 0,
+  }
+}
+
+function normalizeShareRequest(item) {
+  const data = item.data()
+  return {
+    id: item.id,
+    requesterId: data.requesterId || '',
+    ownerId: data.ownerId || '',
+    scope: data.scope === 'backlog' ? 'backlog' : 'list',
+    status: data.status || 'pending',
+    createdAt: data.createdAt || 0,
+  }
+}
+
+function getOtherUserId(friendship, userId) {
+  if (!friendship || !userId) return ''
+  return friendship.users.find((id) => id !== userId) || ''
+}
+
+function canViewFriendScope(friendship, ownerId, scope) {
+  return Boolean(friendship?.status === 'accepted' && friendship.permissions?.[ownerId]?.[scope])
+}
+
+function hasPendingAccessRequest(requests, ownerId, scope) {
+  return requests.some((request) => request.ownerId === ownerId && request.scope === scope && request.status === 'pending')
+}
+
+function isProfileOnline(profile) {
+  return Boolean(profile?.lastSeenAt && Date.now() - profile.lastSeenAt < 5 * 60 * 1000)
+}
+
+function formatLastSeen(lastSeenAt) {
+  if (!lastSeenAt) return 'לא נראה לאחרונה'
+  const diffMinutes = Math.max(0, Math.floor((Date.now() - lastSeenAt) / 60000))
+  if (diffMinutes < 5) return 'מחובר עכשיו'
+  if (diffMinutes < 60) return `נראה לפני ${diffMinutes} דק׳`
+  const diffHours = Math.floor(diffMinutes / 60)
+  if (diffHours < 24) return `נראה לפני ${diffHours} שעות`
+  return 'לא היה מחובר היום'
+}
+
+async function deleteUserSocialData(userId) {
+  const batch = writeBatch(db)
+  batch.delete(doc(db, profilesCollection, userId))
+
+  const friendshipsQuery = query(collection(db, friendshipsCollection), where('users', 'array-contains', userId))
+  const friendshipsSnapshot = await getDocs(friendshipsQuery)
+  friendshipsSnapshot.docs.forEach((item) => batch.delete(item.ref))
+
+  const incomingShareQuery = query(collection(db, shareRequestsCollection), where('ownerId', '==', userId))
+  const incomingShareSnapshot = await getDocs(incomingShareQuery)
+  incomingShareSnapshot.docs.forEach((item) => batch.delete(item.ref))
+
+  const outgoingShareQuery = query(collection(db, shareRequestsCollection), where('requesterId', '==', userId))
+  const outgoingShareSnapshot = await getDocs(outgoingShareQuery)
+  outgoingShareSnapshot.docs.forEach((item) => batch.delete(item.ref))
+
+  await batch.commit()
 }
 
 function isNativeApp() {
