@@ -1,4 +1,6 @@
 *.zip
+*.apk
+*.aab
 *.log
 node_modules/
 dist/

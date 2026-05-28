@@ -1,5 +1,12 @@
 {
   "appId": "com.erangamezone.app",
-  "appName": "EranGameZone",
-  "webDir": "dist"
+  "appName": "MyGameLog",
+  "webDir": "dist",
+  "plugins": {
+    "FirebaseAuthentication": {
+      "authDomain": "erangamezone.firebaseapp.com",
+      "skipNativeAuth": true,
+      "providers": ["google.com"]
+    }
+  }
 }

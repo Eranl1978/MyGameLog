@@ -1,7 +1,8 @@
 <?xml version='1.0' encoding='utf-8'?>
 <resources>
-    <string name="app_name">EranGameZone</string>
-    <string name="title_activity_main">EranGameZone</string>
+    <string name="app_name">MyGameLog</string>
+    <string name="title_activity_main">MyGameLog</string>
     <string name="package_name">com.erangamezone.app</string>
     <string name="custom_url_scheme">com.erangamezone.app</string>
+    <string name="default_web_client_id">865338255165-86g08580c4voijtvjllt6297v1jghbml.apps.googleusercontent.com</string>
 </resources>

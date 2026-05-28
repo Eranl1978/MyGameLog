@@ -1,4 +1,4 @@
-const CACHE = 'egz-react-v1'
+const CACHE = 'mgl-react-v1'
 const ASSETS = [
   '/',
   '/manifest.json',
@@ -6,7 +6,7 @@ const ASSETS = [
   '/icon-512.png',
   '/icon-maskable-192.png',
   '/icon-maskable-512.png',
-  '/egz.png',
+  '/mgl.png',
 ]
 
 self.addEventListener('install', (event) => {

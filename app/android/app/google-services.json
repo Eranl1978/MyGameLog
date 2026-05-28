@@ -1,0 +1,47 @@
+{
+  "project_info": {
+    "project_number": "865338255165",
+    "project_id": "erangamezone",
+    "storage_bucket": "erangamezone.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:865338255165:android:daea18de153aefe43f8754",
+        "android_client_info": {
+          "package_name": "com.erangamezone.app"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "865338255165-4pelbhp1uv6d1glp762tq4kt0ju4iugn.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.erangamezone.app",
+            "certificate_hash": "44ecb9fccf5dee0e50953476fb91e1fb03404c90"
+          }
+        },
+        {
+          "client_id": "865338255165-86g08580c4voijtvjllt6297v1jghbml.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAD1T-fWFkkdq4hyVuxmI03pJd5n1cc70s"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "865338255165-86g08580c4voijtvjllt6297v1jghbml.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

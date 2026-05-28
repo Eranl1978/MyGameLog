@@ -1,7 +1,7 @@
 {
-  "name": "EranGameZone",
-  "short_name": "EGZ",
-  "description": "Gaming Zone by Eran",
+  "name": "MyGameLog",
+  "short_name": "MGL",
+  "description": "Your personal game log",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

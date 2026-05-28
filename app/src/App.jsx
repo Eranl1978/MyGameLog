@@ -1,30 +1,52 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   addDoc,
   collection,
   deleteDoc,
   doc,
+  getDoc,
+  getDocs,
   onSnapshot,
   query,
+  serverTimestamp,
   updateDoc,
+  waitForPendingWrites,
   where,
+  writeBatch,
 } from 'firebase/firestore'
-import { onAuthStateChanged, signInWithPopup, signOut } from 'firebase/auth'
+import { FirebaseAuthentication } from '@capacitor-firebase/authentication'
+import {
+  deleteUser,
+  GoogleAuthProvider,
+  onAuthStateChanged,
+  reauthenticateWithCredential,
+  reauthenticateWithPopup,
+  signInWithCredential,
+  signInWithPopup,
+  signOut,
+} from 'firebase/auth'
 import {
   BarChart3,
+  Bookmark,
   Check,
   ChevronDown,
   Gamepad2,
   Grid2X2,
+  GripVertical,
   Home,
+  Info,
   List,
   LogOut,
   Plus,
   Save,
   Search,
+  Settings,
+  Share2,
+  ShieldCheck,
   Sparkles,
   Star,
   Trash2,
+  UserRound,
   X,
 } from 'lucide-react'
 import './App.css'
@@ -43,6 +65,151 @@ import {
 } from './data/catalog'
 import { auth, db, gamesCollection, googleProvider } from './lib/firebase'
 
+const APP_VERSION = '1.0.20'
+const sharesCollection = 'shares'
+const PUBLIC_WEB_URL = 'https://erangamezone.netlify.app/'
+const DEFAULT_LANGUAGE = 'he'
+const languageOptions = [
+  { value: 'he', label: 'עברית', dir: 'rtl', lang: 'he' },
+  { value: 'en', label: 'English', dir: 'ltr', lang: 'en' },
+  { value: 'ar', label: 'العربية', dir: 'rtl', lang: 'ar' },
+]
+
+const translations = {
+  he: {
+    account: 'חשבון',
+    addGame: 'הוסף משחק',
+    all: 'הכל',
+    app: 'אפליקציה',
+    backlog: 'בקלוג',
+    backlogCount: ({ count }) => `${count} משחקים שמחכים לך`,
+    backlogEmpty: 'אין משחקים בקלוג',
+    backlogEmptyHint: 'סמן משחק כבקלוג מתוך עמוד המשחק.',
+    backlogHeroBody: 'רשימת המשחקים לפי הסדר שאתה רוצה לשחק.',
+    backlogHeroTitle: 'מה משחקים בהמשך?',
+    catalogSubtitle: 'הקטלוג האישי שלך',
+    deleteAccount: 'מחיקת חשבון',
+    deleteAccountDescription: ({ count }) => `מוחק את החשבון ואת ${count} המשחקים שלך`,
+    deletingAccount: 'מוחק חשבון...',
+    discoverSubtitle: 'חפש משחקים חדשים והוסף אותם מהר',
+    done: 'שוחקו',
+    general: 'כללי',
+    grid: 'גריד',
+    home: 'בית',
+    games: 'משחקים',
+    language: 'שפה',
+    list: 'רשימה',
+    loginGoogle: 'התחבר עם Google',
+    logout: 'התנתקות',
+    logoutDescription: 'יציאה מהחשבון במכשיר הזה',
+    owned: 'בבעלותי',
+    privacy: 'פרטיות',
+    privacyAuth: 'ההתחברות מתבצעת דרך Google, בלי סיסמה באפליקציה.',
+    privacyStorage: 'המשחקים נשמרים בחשבון Firebase שלך בלבד.',
+    profileFallbackName: 'משתמש MyGameLog',
+    search: 'חיפוש',
+    searchHeroBody: 'מצא משחקים מהאינטרנט והוסף אותם לרשימה, לבקלוג או לרצונות.',
+    searchHeroTitle: 'חיפוש',
+    searchPlaceholder: 'חפש משחק...',
+    settings: 'הגדרות',
+    settingsSubtitle: 'הגדרות חשבון ופרטיות',
+    shareBacklog: 'שתף בקלוג',
+    shareList: 'שתף רשימה',
+    summary: 'סיכום',
+    summaryGeneral: 'סיכום כללי',
+    version: ({ version }) => `גרסה ${version}`,
+    want: 'רוצה',
+  },
+  en: {
+    account: 'Account',
+    addGame: 'Add game',
+    all: 'All',
+    app: 'App',
+    backlog: 'Backlog',
+    backlogCount: ({ count }) => `${count} games waiting`,
+    backlogEmpty: 'No games in Backlog',
+    backlogEmptyHint: 'Mark a game as Backlog from its game page.',
+    backlogHeroBody: 'Your games in the order you want to play them.',
+    backlogHeroTitle: 'What should you play next?',
+    catalogSubtitle: 'Your personal game catalog',
+    deleteAccount: 'Delete account',
+    deleteAccountDescription: ({ count }) => `Deletes your account and ${count} games`,
+    deletingAccount: 'Deleting account...',
+    discoverSubtitle: 'Search new games and add them quickly',
+    done: 'Played',
+    general: 'General',
+    grid: 'Grid',
+    home: 'Home',
+    games: 'games',
+    language: 'Language',
+    list: 'List',
+    loginGoogle: 'Sign in with Google',
+    logout: 'Sign out',
+    logoutDescription: 'Sign out on this device',
+    owned: 'Owned',
+    privacy: 'Privacy',
+    privacyAuth: 'Sign-in uses Google, without an app password.',
+    privacyStorage: 'Your games are stored only in your Firebase account.',
+    profileFallbackName: 'MyGameLog user',
+    search: 'Search',
+    searchHeroBody: 'Find games online and add them to your list, Backlog, or wishlist.',
+    searchHeroTitle: 'Search',
+    searchPlaceholder: 'Search game...',
+    settings: 'Settings',
+    settingsSubtitle: 'Account and privacy settings',
+    shareBacklog: 'Share Backlog',
+    shareList: 'Share list',
+    summary: 'Summary',
+    summaryGeneral: 'Overview',
+    version: ({ version }) => `Version ${version}`,
+    want: 'Want',
+  },
+  ar: {
+    account: 'الحساب',
+    addGame: 'إضافة لعبة',
+    all: 'الكل',
+    app: 'التطبيق',
+    backlog: 'قائمة الانتظار',
+    backlogCount: ({ count }) => `${count} ألعاب بانتظارك`,
+    backlogEmpty: 'لا توجد ألعاب في قائمة الانتظار',
+    backlogEmptyHint: 'علّم لعبة كقائمة انتظار من صفحة اللعبة.',
+    backlogHeroBody: 'قائمة الألعاب بالترتيب الذي تريد لعبها به.',
+    backlogHeroTitle: 'ماذا ستلعب لاحقا؟',
+    catalogSubtitle: 'كتالوج الألعاب الشخصي',
+    deleteAccount: 'حذف الحساب',
+    deleteAccountDescription: ({ count }) => `يحذف الحساب و ${count} ألعاب`,
+    deletingAccount: 'جار حذف الحساب...',
+    discoverSubtitle: 'ابحث عن ألعاب جديدة وأضفها بسرعة',
+    done: 'تم لعبها',
+    general: 'عام',
+    grid: 'شبكة',
+    home: 'الرئيسية',
+    games: 'ألعاب',
+    language: 'اللغة',
+    list: 'قائمة',
+    loginGoogle: 'تسجيل الدخول عبر Google',
+    logout: 'تسجيل الخروج',
+    logoutDescription: 'الخروج من الحساب على هذا الجهاز',
+    owned: 'أملكها',
+    privacy: 'الخصوصية',
+    privacyAuth: 'يتم تسجيل الدخول عبر Google بدون كلمة مرور داخل التطبيق.',
+    privacyStorage: 'يتم حفظ ألعابك فقط في حساب Firebase الخاص بك.',
+    profileFallbackName: 'مستخدم MyGameLog',
+    search: 'بحث',
+    searchHeroBody: 'ابحث عن ألعاب على الإنترنت وأضفها إلى قائمتك أو قائمة الانتظار أو الرغبات.',
+    searchHeroTitle: 'بحث',
+    searchPlaceholder: 'ابحث عن لعبة...',
+    settings: 'الإعدادات',
+    settingsSubtitle: 'إعدادات الحساب والخصوصية',
+    shareBacklog: 'مشاركة قائمة الانتظار',
+    shareList: 'مشاركة القائمة',
+    summary: 'ملخص',
+    summaryGeneral: 'ملخص عام',
+    version: ({ version }) => `الإصدار ${version}`,
+    want: 'أريدها',
+  },
+}
+
 function App() {
   const [user, setUser] = useState(null)
   const [authLoading, setAuthLoading] = useState(true)
@@ -50,13 +217,94 @@ function App() {
   const [games, setGames] = useState([])
   const [screen, setScreen] = useState('home')
   const [search, setSearch] = useState('')
-  const [platformFilter, setPlatformFilter] = useState('הכל')
+  const [platformFilter, setPlatformFilter] = useState('all')
   const [tagFilters, setTagFilters] = useState([])
   const [statusFilter, setStatusFilter] = useState('all')
   const [viewMode, setViewMode] = useState('list')
   const [addOpen, setAddOpen] = useState(false)
   const [selectedId, setSelectedId] = useState(null)
   const [toast, setToast] = useState('')
+  const [appError, setAppError] = useState('')
+  const [deletingAccount, setDeletingAccount] = useState(false)
+  const [language, setLanguage] = useState(() => {
+    try {
+      return localStorage.getItem('mgl-language') || DEFAULT_LANGUAGE
+    } catch {
+      return DEFAULT_LANGUAGE
+    }
+  })
+  const [shareRoute, setShareRoute] = useState(null)
+  const [shareLoading, setShareLoading] = useState(false)
+  const [shareError, setShareError] = useState('')
+  const t = useMemo(() => createTranslator(language), [language])
+
+  useEffect(() => {
+    const config = getLanguageConfig(language)
+    document.documentElement.lang = config.lang
+    document.documentElement.dir = config.dir
+    try {
+      localStorage.setItem('mgl-language', config.value)
+    } catch {
+      // localStorage can be unavailable in some embedded/private contexts.
+    }
+  }, [language])
+
+  useEffect(() => {
+    const reportError = (event) => {
+      const message = getErrorMessage(event.error || event.message || event)
+      console.error(event.error || event)
+      setAppError(message)
+    }
+    const reportRejection = (event) => {
+      const message = getErrorMessage(event.reason)
+      console.error(event.reason)
+      setAppError(message)
+    }
+
+    window.addEventListener('error', reportError)
+    window.addEventListener('unhandledrejection', reportRejection)
+
+    return () => {
+      window.removeEventListener('error', reportError)
+      window.removeEventListener('unhandledrejection', reportRejection)
+    }
+  }, [])
+
+  useEffect(() => {
+    const loadSharedContent = async () => {
+      const params = new URLSearchParams(window.location.search)
+      const shareId = params.get('share')
+      const encodedHash = window.location.hash.startsWith('#share=')
+        ? window.location.hash.slice('#share='.length)
+        : ''
+
+      if (!shareId && !encodedHash) return
+
+      setShareLoading(true)
+      try {
+        if (encodedHash) {
+          setShareRoute(parseEncodedShare(encodedHash))
+          return
+        }
+
+        try {
+          const snapshot = await getDoc(doc(db, sharesCollection, shareId))
+          if (!snapshot.exists()) throw new Error('השיתוף לא נמצא')
+          setShareRoute(snapshot.data())
+        } catch (error) {
+          if (!encodedHash) throw error
+          setShareRoute(parseEncodedShare(encodedHash))
+        }
+      } catch (error) {
+        console.error(error)
+        setShareError(getErrorMessage(error))
+      } finally {
+        setShareLoading(false)
+      }
+    }
+
+    loadSharedContent()
+  }, [])
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
@@ -79,13 +327,15 @@ function App() {
     const unsubscribe = onSnapshot(
       gamesQuery,
       (snapshot) => {
-        const nextGames = snapshot.docs.map((item) => ({ id: item.id, ...item.data() }))
+        const nextGames = snapshot.docs.map(normalizeGame)
         nextGames.sort((a, b) => a.name.localeCompare(b.name, 'he'))
         setGames(nextGames)
+        setAppError('')
         setGamesLoading(false)
       },
       (error) => {
         console.error(error)
+        setAppError(getErrorMessage(error))
         setGamesLoading(false)
       },
     )
@@ -96,14 +346,18 @@ function App() {
   const filteredGames = useMemo(() => {
     const q = search.trim().toLowerCase()
     return games.filter((game) => {
+      const name = String(game.name || '').toLowerCase()
+      const dev = String(game.dev || '').toLowerCase()
       const bySearch =
         !q ||
-        game.name?.toLowerCase().includes(q) ||
-        game.dev?.toLowerCase().includes(q)
-      const byPlatform = platformFilter === 'הכל' || game.platform === platformFilter
+        name.includes(q) ||
+        dev.includes(q)
+      const byPlatform = platformFilter === 'all' || game.platform === platformFilter
       const byTags =
         tagFilters.length === 0 || tagFilters.some((tag) => game.tags?.includes(tag))
-      const byStatus = statusFilter === 'all' || game.status === statusFilter
+      const byStatus =
+        statusFilter === 'all' ||
+        (statusFilter === 'backlog' ? game.backlog : game.status === statusFilter)
       return bySearch && byPlatform && byTags && byStatus
     })
   }, [games, platformFilter, search, statusFilter, tagFilters])
@@ -118,8 +372,84 @@ function App() {
     window.setTimeout(() => setToast(''), 2200)
   }
 
+  const shareList = async () => {
+    const payload = {
+      kind: 'list',
+      ownerName: user.displayName || user.email || 'MyGameLog',
+      games: games.map(toShareGame),
+      createdAt: Date.now(),
+      appVersion: APP_VERSION,
+    }
+    const url = await createShareUrl(payload)
+    await shareUrl({
+      title: 'רשימת המשחקים שלי',
+      text: `${payload.ownerName} שיתף איתך רשימת משחקים מ-MyGameLog`,
+      url,
+    })
+    showToast('קישור שיתוף מוכן')
+  }
+
+  const shareGame = async (game) => {
+    const payload = {
+      kind: 'game',
+      ownerName: user.displayName || user.email || 'MyGameLog',
+      game: toShareGame(game),
+      createdAt: Date.now(),
+      appVersion: APP_VERSION,
+    }
+    const url = await createShareUrl(payload)
+    await shareUrl({
+      title: game.name,
+      text: `${payload.ownerName} שיתף איתך משחק מ-MyGameLog`,
+      url,
+    })
+    showToast('קישור שיתוף מוכן')
+  }
+
+  const shareBacklog = async () => {
+    const backlogGames = sortBacklogGames(games.filter((game) => game.backlog))
+    if (!backlogGames.length) {
+      showToast('אין משחקים בקלוג לשיתוף')
+      return
+    }
+
+    const payload = {
+      kind: 'backlog',
+      ownerName: user.displayName || user.email || 'MyGameLog',
+      games: backlogGames.map((game, index) => ({
+        ...toShareGame(game),
+        backlogPosition: index + 1,
+      })),
+      createdAt: Date.now(),
+      appVersion: APP_VERSION,
+    }
+    const url = await createShareUrl(payload)
+    await shareUrl({
+      title: 'הבקלוג שלי',
+      text: `${payload.ownerName} שיתף איתך בקלוג מ-MyGameLog`,
+      url,
+    })
+    showToast('קישור בקלוג מוכן')
+  }
+
   const login = async () => {
     try {
+      if (isNativeApp()) {
+        const result = await FirebaseAuthentication.signInWithGoogle({
+          skipNativeAuth: true,
+          useCredentialManager: false,
+        })
+        const idToken = result.credential?.idToken
+
+        if (!idToken) {
+          throw new Error('Google לא החזיר token לאפליקציה')
+        }
+
+        const credential = GoogleAuthProvider.credential(idToken)
+        await signInWithCredential(auth, credential)
+        return
+      }
+
       await signInWithPopup(auth, googleProvider)
     } catch (error) {
       alert(`שגיאה בהתחברות: ${error.message}`)
@@ -127,7 +457,32 @@ function App() {
   }
 
   const logout = async () => {
-    if (confirm('להתנתק?')) await signOut(auth)
+    if (!confirm('להתנתק?')) return
+    if (isNativeApp()) await FirebaseAuthentication.signOut().catch(console.info)
+    await signOut(auth)
+    setScreen('home')
+  }
+
+  const deleteAccount = async () => {
+    if (!confirm('למחוק את החשבון ואת כל המשחקים? אי אפשר לשחזר את זה.')) return
+
+    const approval = prompt('כדי לאשר מחיקה מלאה, כתוב: מחיקה')
+    if (approval !== 'מחיקה') return
+
+    setDeletingAccount(true)
+    try {
+      await reauthenticateCurrentUser()
+      await deleteUserGames(user.uid)
+      await deleteUser(auth.currentUser)
+      if (isNativeApp()) await FirebaseAuthentication.signOut().catch(console.info)
+      setScreen('home')
+      showToast('החשבון נמחק')
+    } catch (error) {
+      console.error(error)
+      alert(`מחיקת החשבון נכשלה: ${getErrorMessage(error)}`)
+    } finally {
+      setDeletingAccount(false)
+    }
   }
 
   const saveNewGame = async (game) => {
@@ -147,11 +502,60 @@ function App() {
     showToast('נשמר')
   }
 
+  const markBacklogPlayed = async (gameId) => {
+    try {
+      await updateDoc(doc(db, gamesCollection, gameId), {
+        status: 'done',
+        backlog: false,
+      })
+      showToast('סומן כשיחקת')
+    } catch (error) {
+      console.error(error)
+      alert(`לא הצלחתי לעדכן: ${getErrorMessage(error)}`)
+    }
+  }
+
+  const reorderBacklog = async (orderedIds) => {
+    try {
+      const batch = writeBatch(db)
+      orderedIds.forEach((gameId, index) => {
+        batch.update(doc(db, gamesCollection, gameId), {
+          backlogOrder: (index + 1) * 1000,
+        })
+      })
+      await batch.commit()
+      showToast('סדר הבקלוג נשמר')
+    } catch (error) {
+      console.error(error)
+      alert(`לא הצלחתי לשמור את הסדר: ${getErrorMessage(error)}`)
+    }
+  }
+
   const removeGame = async (gameId) => {
     if (!confirm('למחוק מהקטלוג?')) return
-    await deleteDoc(doc(db, gamesCollection, gameId))
-    setSelectedId(null)
-    showToast('נמחק')
+    try {
+      const gameRef = doc(db, gamesCollection, gameId)
+      await deleteDoc(gameRef)
+      await waitForPendingWrites(db)
+
+      setSelectedId(null)
+      showToast('נמחק')
+    } catch (error) {
+      console.error(error)
+      alert(`המחיקה נכשלה: ${getErrorMessage(error)}`)
+    }
+  }
+
+  if (appError) {
+    return <ErrorScreen message={appError} onRetry={() => window.location.reload()} />
+  }
+
+  if (shareLoading) {
+    return <Splash />
+  }
+
+  if (shareRoute || shareError) {
+    return <ShareScreen error={shareError} share={shareRoute} />
   }
 
   if (authLoading || gamesLoading) {
@@ -159,7 +563,7 @@ function App() {
   }
 
   if (!user) {
-    return <LoginScreen onLogin={login} />
+    return <LoginScreen onLogin={login} t={t} />
   }
 
   return (
@@ -171,6 +575,7 @@ function App() {
           onLogout={logout}
           onOpenAdd={() => setAddOpen(true)}
           onOpenGame={setSelectedId}
+          onShareList={shareList}
           platformFilter={platformFilter}
           search={search}
           setPlatformFilter={setPlatformFilter}
@@ -180,14 +585,43 @@ function App() {
           setViewMode={setViewMode}
           statusFilter={statusFilter}
           tagFilters={tagFilters}
+          t={t}
           user={user}
           viewMode={viewMode}
         />
+      ) : screen === 'backlog' ? (
+        <BacklogScreen
+          games={games}
+          onMarkPlayed={markBacklogPlayed}
+          onOpenGame={setSelectedId}
+          onReorderBacklog={reorderBacklog}
+          onShareBacklog={shareBacklog}
+          t={t}
+        />
+      ) : screen === 'discover' ? (
+        <DiscoveryScreen
+          games={games}
+          onAddGame={saveNewGame}
+          onOpenGame={setSelectedId}
+          t={t}
+        />
+      ) : screen === 'stats' ? (
+        <StatsScreen games={games} onOpenGame={setSelectedId} t={t} />
       ) : (
-        <StatsScreen games={games} onOpenGame={setSelectedId} />
+        <SettingsScreen
+          appVersion={APP_VERSION}
+          deletingAccount={deletingAccount}
+          gamesCount={games.length}
+          language={language}
+          onDeleteAccount={deleteAccount}
+          onLanguageChange={setLanguage}
+          onLogout={logout}
+          t={t}
+          user={user}
+        />
       )}
 
-      <BottomNav screen={screen} setScreen={setScreen} />
+      <BottomNav screen={screen} setScreen={setScreen} t={t} />
 
       {addOpen ? (
         <AddGameSheet onClose={() => setAddOpen(false)} onSave={saveNewGame} />
@@ -200,6 +634,7 @@ function App() {
           onClose={() => setSelectedId(null)}
           onDelete={removeGame}
           onSave={saveGame}
+          onShare={shareGame}
         />
       ) : null}
 
@@ -211,6 +646,7 @@ function App() {
 function Splash() {
   return (
     <main className="splash">
+      <img className="splash-logo-img" src="/mgl.png" alt="" />
       <Logo size="large" />
       <div className="loading-dots" aria-label="טוען">
         <span />
@@ -221,12 +657,123 @@ function Splash() {
   )
 }
 
-function LoginScreen({ onLogin }) {
+function ErrorScreen({ message, onRetry }) {
+  return (
+    <main className="error-screen">
+      <Logo size="large" />
+      <strong>משהו נתקע בטעינת האפליקציה</strong>
+      <p dir="ltr">{message}</p>
+      <button className="primary-btn" type="button" onClick={onRetry}>
+        נסה שוב
+      </button>
+    </main>
+  )
+}
+
+function ShareScreen({ error, share }) {
+  const isSharedList = share?.kind === 'list' || share?.kind === 'backlog'
+  const games = isSharedList ? share.games || [] : share?.game ? [share.game] : []
+  const isSingle = share?.kind === 'game'
+  const isBacklog = share?.kind === 'backlog'
+
+  return (
+    <main className="app-shell public-shell">
+      <section className="screen">
+        <header className="topbar compact">
+          <div className="brand-row">
+            <img className="brand-icon" src="/mgl.png" alt="" />
+            <div>
+              <Logo />
+              <p className="brand-sub">שיתוף לקריאה בלבד</p>
+            </div>
+          </div>
+        </header>
+
+        {error ? (
+          <div className="public-error">
+            <strong>לא הצלחתי לפתוח את השיתוף</strong>
+            <span>{error}</span>
+          </div>
+        ) : (
+          <>
+            <section className="public-intro">
+              <span>{share.ownerName || 'חבר'} שיתף איתך</span>
+              <h1>{isSingle ? games[0]?.name : isBacklog ? 'בקלוג' : 'רשימת המשחקים'}</h1>
+              <p>
+                {isSingle
+                  ? 'משחק אחד מתוך MyGameLog'
+                  : isBacklog
+                    ? `${games.length} משחקים לפי סדר משחק מתוך MyGameLog`
+                    : `${games.length} משחקים מתוך MyGameLog`}
+              </p>
+            </section>
+
+            {isSingle && games[0] ? (
+              <section className="panel">
+                <GameHero game={games[0]} />
+                <SharedGameDetails game={games[0]} />
+              </section>
+            ) : (
+              <div className="shared-games-grid">
+                {games.map((game, index) => (
+                  <SharedGameCard game={game} key={`${game.name}-${index}`} showPosition={isBacklog} />
+                ))}
+              </div>
+            )}
+          </>
+        )}
+      </section>
+    </main>
+  )
+}
+
+function SharedGameCard({ game, showPosition }) {
+  return (
+    <article className="shared-game-card">
+      {showPosition ? <span className="shared-rank">#{game.backlogPosition || ''}</span> : null}
+      <GameThumb game={game} cover />
+      <div className="game-card-body">
+        <strong>{game.name}</strong>
+        <small>
+          {game.platform} {game.dev ? `· ${game.dev}` : ''}
+        </small>
+        <span className="game-card-meta">
+          <span className="game-card-badges">
+            {game.backlog ? <span className="mini-badge">בקלוג</span> : null}
+            <StatusBadge status={game.status} />
+          </span>
+          {game.stars ? <small className="stars-text">{starText(game.stars)}</small> : null}
+        </span>
+      </div>
+    </article>
+  )
+}
+
+function SharedGameDetails({ game }) {
+  return (
+    <div className="shared-details">
+      <div>
+        <span>סטטוס</span>
+        <strong>{STATUS_LABELS[game.status] || 'יש לי'}</strong>
+      </div>
+      <div>
+        <span>בקלוג</span>
+        <strong>{game.backlog ? 'כן' : 'לא'}</strong>
+      </div>
+      <div>
+        <span>דירוג</span>
+        <strong>{game.stars ? starText(game.stars) : 'לא דורג'}</strong>
+      </div>
+    </div>
+  )
+}
+
+function LoginScreen({ onLogin, t }) {
   return (
     <main className="login-screen">
-      <img className="login-logo-img" src="/egz.png" alt="" />
+      <img className="login-logo-img" src="/mgl.png" alt="" />
       <Logo size="large" />
-      <p>הקטלוג האישי שלך</p>
+      <p>{t('catalogSubtitle')}</p>
       <button className="google-btn" type="button" onClick={onLogin}>
         <img
           src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg"
@@ -234,7 +781,7 @@ function LoginScreen({ onLogin }) {
           height="22"
           alt=""
         />
-        התחבר עם Google
+        {t('loginGoogle')}
       </button>
     </main>
   )
@@ -246,6 +793,7 @@ function HomeScreen({
   onLogout,
   onOpenAdd,
   onOpenGame,
+  onShareList,
   platformFilter,
   search,
   setPlatformFilter,
@@ -255,22 +803,24 @@ function HomeScreen({
   setViewMode,
   statusFilter,
   tagFilters,
+  t,
   user,
   viewMode,
 }) {
   const owned = games.filter((game) => game.status === 'own' || game.status === 'done').length
   const want = games.filter((game) => game.status === 'want').length
+  const backlog = games.filter((game) => game.backlog).length
   const firstName = user.displayName?.split(' ')[0] || ''
 
   return (
     <section className="screen">
       <header className="topbar">
         <div className="brand-row">
-          <img className="brand-icon" src="/egz.png" alt="" />
+          <img className="brand-icon" src="/mgl.png" alt="" />
           <div>
             <Logo />
             <p className="brand-sub">
-              {owned} בבעלותי · {want} ברשימת רצונות{firstName ? ` · ${firstName}` : ''}
+              {owned} {t('owned')} · {want} {t('want')} · {backlog} {t('backlog')}{firstName ? ` · ${firstName}` : ''}
             </p>
           </div>
         </div>
@@ -284,7 +834,7 @@ function HomeScreen({
         <input
           value={search}
           onChange={(event) => setSearch(event.target.value)}
-          placeholder="חפש משחק..."
+          placeholder={t('searchPlaceholder')}
           autoComplete="off"
           spellCheck="false"
         />
@@ -296,14 +846,14 @@ function HomeScreen({
       </div>
 
       <ChipRow>
-        {['הכל', ...PLATFORMS].map((platform) => (
+        {[{ value: 'all', label: t('all') }, ...PLATFORMS.map((platform) => ({ value: platform, label: platform }))].map((platform) => (
           <button
-            key={platform}
-            className={platformFilter === platform ? 'chip active' : 'chip'}
+            key={platform.value}
+            className={platformFilter === platform.value ? 'chip active' : 'chip'}
             type="button"
-            onClick={() => setPlatformFilter(platform)}
+            onClick={() => setPlatformFilter(platform.value)}
           >
-            {platform}
+            {platform.label}
           </button>
         ))}
       </ChipRow>
@@ -334,7 +884,14 @@ function HomeScreen({
           type="button"
           onClick={() => setStatusFilter('all')}
         >
-          הכל
+          {t('all')}
+        </button>
+        <button
+          className={statusFilter === 'backlog' ? 'chip active' : 'chip'}
+          type="button"
+          onClick={() => setStatusFilter('backlog')}
+        >
+          {t('backlog')}
         </button>
         {STATUS_OPTIONS.map((status) => (
           <button
@@ -343,33 +900,36 @@ function HomeScreen({
             type="button"
             onClick={() => setStatusFilter(status.value)}
           >
-            {status.label}
+            {getStatusLabel(status.value, t)}
           </button>
         ))}
       </ChipRow>
 
       <div className="toolbar">
-        <span>{filteredGames.length} משחקים</span>
+        <span>{filteredGames.length} {t('games')}</span>
         <div className="toolbar-actions">
-          <div className="segmented" aria-label="תצוגה">
+          <div className="segmented" aria-label={t('grid')}>
             <button
               className={viewMode === 'list' ? 'active' : ''}
               type="button"
-              onClick={() => setViewMode('list')}
-              title="רשימה"
+            onClick={() => setViewMode('list')}
+              title={t('list')}
             >
               <List size={18} />
             </button>
             <button
               className={viewMode === 'grid' ? 'active' : ''}
               type="button"
-              onClick={() => setViewMode('grid')}
-              title="גריד"
+            onClick={() => setViewMode('grid')}
+              title={t('grid')}
             >
               <Grid2X2 size={18} />
             </button>
           </div>
-          <button className="add-btn" type="button" onClick={onOpenAdd} title="הוסף משחק">
+          <button className="icon-btn" type="button" onClick={onShareList} title={t('shareList')}>
+            <Share2 size={19} />
+          </button>
+          <button className="add-btn" type="button" onClick={onOpenAdd} title={t('addGame')}>
             <Plus size={22} />
           </button>
         </div>
@@ -379,9 +939,9 @@ function HomeScreen({
         <div className={viewMode === 'grid' ? 'games-grid' : 'games-list'}>
           {filteredGames.map((game) =>
             viewMode === 'grid' ? (
-              <GameCard key={game.id} game={game} onOpen={onOpenGame} />
+              <GameCard key={game.id} game={game} onOpen={onOpenGame} t={t} />
             ) : (
-              <GameRow key={game.id} game={game} onOpen={onOpenGame} />
+              <GameRow key={game.id} game={game} onOpen={onOpenGame} t={t} />
             ),
           )}
         </div>
@@ -392,10 +952,421 @@ function HomeScreen({
   )
 }
 
-function StatsScreen({ games, onOpenGame }) {
+function BacklogScreen({ games, onMarkPlayed, onOpenGame, onReorderBacklog, onShareBacklog, t }) {
+  const backlogGames = useMemo(
+    () => sortBacklogGames(games.filter((game) => game.backlog)),
+    [games],
+  )
+  const doneGames = games.filter((game) => game.status === 'done').length
+  const platforms = [...new Set(backlogGames.map((game) => game.platform).filter(Boolean))].slice(0, 3)
+  const [dragId, setDragId] = useState('')
+  const [dropId, setDropId] = useState('')
+  const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 })
+  const dragRef = useRef({ id: '', pointerId: null, startX: 0, startY: 0 })
+  const dropIdRef = useRef('')
+
+  const setDropTarget = (id) => {
+    dropIdRef.current = id
+    setDropId(id)
+  }
+
+  const startDrag = (event, gameId) => {
+    if (backlogGames.length < 2) return
+    if (event.pointerType === 'mouse' && event.button !== 0) return
+
+    event.preventDefault()
+    event.currentTarget.setPointerCapture?.(event.pointerId)
+    dragRef.current = {
+      id: gameId,
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+    }
+    setDragOffset({ x: 0, y: 0 })
+    setDragId(gameId)
+    setDropTarget(gameId)
+  }
+
+  const moveDrag = (event) => {
+    const sourceId = dragRef.current.id
+    if (!sourceId) return
+
+    event.preventDefault()
+    setDragOffset({
+      x: event.clientX - dragRef.current.startX,
+      y: event.clientY - dragRef.current.startY,
+    })
+
+    const nextDropId = findBacklogDropTarget(event.clientY, sourceId) || sourceId
+    if (nextDropId && nextDropId !== dropIdRef.current) setDropTarget(nextDropId)
+  }
+
+  const finishDrag = async (event) => {
+    const sourceId = dragRef.current.id
+    const targetId = dropIdRef.current
+    if (dragRef.current.pointerId !== null) {
+      try {
+        event.currentTarget.releasePointerCapture?.(dragRef.current.pointerId)
+      } catch {
+        // Pointer capture may already be released by the browser.
+      }
+    }
+
+    dragRef.current = { id: '', pointerId: null, startX: 0, startY: 0 }
+    setDragId('')
+    setDragOffset({ x: 0, y: 0 })
+    setDropTarget('')
+
+    if (!sourceId || !targetId || sourceId === targetId) return
+
+    const fromIndex = backlogGames.findIndex((game) => game.id === sourceId)
+    const toIndex = backlogGames.findIndex((game) => game.id === targetId)
+    if (fromIndex < 0 || toIndex < 0) return
+
+    const nextGames = moveItem(backlogGames, fromIndex, toIndex)
+    await onReorderBacklog(nextGames.map((game) => game.id))
+  }
+
+  const cancelDrag = (event) => {
+    if (dragRef.current.pointerId !== null) {
+      try {
+        event.currentTarget.releasePointerCapture?.(dragRef.current.pointerId)
+      } catch {
+        // Pointer capture may already be released by the browser.
+      }
+    }
+    dragRef.current = { id: '', pointerId: null, startX: 0, startY: 0 }
+    setDragId('')
+    setDragOffset({ x: 0, y: 0 })
+    setDropTarget('')
+  }
+
+  return (
+    <section className="screen">
+      <header className="topbar compact">
+        <div className="brand-row">
+          <img className="brand-icon" src="/mgl.png" alt="" />
+          <div>
+            <Logo />
+            <p className="brand-sub">{t('backlogCount', { count: backlogGames.length })}</p>
+          </div>
+        </div>
+        <button
+          className="icon-btn"
+          type="button"
+          onClick={onShareBacklog}
+          disabled={!backlogGames.length}
+          title={t('shareBacklog')}
+        >
+          <Share2 size={20} />
+        </button>
+      </header>
+
+      <section className="backlog-hero">
+        <span className="backlog-hero-icon">
+          <Bookmark size={24} />
+        </span>
+        <div>
+          <span>{t('backlog')}</span>
+          <h1>{t('backlogHeroTitle')}</h1>
+          <p>{t('backlogHeroBody')}</p>
+        </div>
+      </section>
+
+      <div className="backlog-summary-row">
+        <div>
+          <strong>{backlogGames.length}</strong>
+          <span>{t('backlog')}</span>
+        </div>
+        <div>
+          <strong>{doneGames}</strong>
+          <span>{t('done')}</span>
+        </div>
+        <div>
+          <strong>{platforms.length ? platforms.join(' · ') : t('general')}</strong>
+          <span>פלטפורמות</span>
+        </div>
+      </div>
+
+      {backlogGames.length ? (
+        <div className="backlog-list">
+          {backlogGames.map((game, index) => (
+            <article
+              className={[
+                'backlog-item',
+                dragId === game.id ? 'dragging' : '',
+                dropId === game.id && dragId !== game.id ? 'drop-target' : '',
+              ].filter(Boolean).join(' ')}
+              data-backlog-id={game.id}
+              key={game.id}
+              style={
+                dragId === game.id
+                  ? {
+                      '--drag-x': `${dragOffset.x}px`,
+                      '--drag-y': `${dragOffset.y}px`,
+                    }
+                  : undefined
+              }
+            >
+              <button
+                className="backlog-drag-handle"
+                type="button"
+                onPointerCancel={cancelDrag}
+                onPointerDown={(event) => startDrag(event, game.id)}
+                onPointerMove={moveDrag}
+                onPointerUp={finishDrag}
+                title="גרור לשינוי מיקום"
+              >
+                <GripVertical size={19} />
+              </button>
+              <span className="backlog-rank">{index + 1}</span>
+              <button className="backlog-main" type="button" onClick={() => onOpenGame(game.id)}>
+                <GameThumb compact game={game} />
+                <span className="backlog-info">
+                  <strong>{game.name}</strong>
+                  <small>
+                    {game.platform} {game.dev ? `· ${game.dev}` : ''}
+                  </small>
+                  <span className="backlog-tags">
+                    <StatusBadge status={game.status} t={t} />
+                    {game.stars ? <span className="stars-text">{starText(game.stars)}</span> : null}
+                    {(game.tags || []).slice(0, 2).map((tag) => (
+                      <span key={tag}>{TAG_LABELS[tag] || tag}</span>
+                    ))}
+                  </span>
+                </span>
+              </button>
+              <button
+                className="backlog-done-btn"
+                type="button"
+                onClick={() => onMarkPlayed(game.id)}
+                title="סמן כשיחקתי"
+              >
+                <Check size={17} />
+                <span>שיחקתי</span>
+              </button>
+            </article>
+          ))}
+        </div>
+      ) : (
+        <div className="empty-state">
+          <Bookmark size={42} />
+          <strong>{t('backlogEmpty')}</strong>
+          <span>{t('backlogEmptyHint')}</span>
+        </div>
+      )}
+    </section>
+  )
+}
+
+function DiscoveryScreen({ games, onAddGame, onOpenGame, t }) {
+  const [query, setQuery] = useState('')
+  const [results, setResults] = useState([])
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+  const [searched, setSearched] = useState(false)
+  const [addingKey, setAddingKey] = useState('')
+  const suggestions = ['Elden Ring', 'Spider-Man', 'Mario', 'God of War', 'Forza']
+
+  useEffect(() => {
+    const term = query.trim()
+    if (term.length < 2) return undefined
+
+    let cancelled = false
+    const timer = window.setTimeout(async () => {
+      setLoading(true)
+      setError('')
+      setSearched(true)
+      try {
+        const nextResults = await fetchRawgGames(term)
+        if (!cancelled) setResults(nextResults)
+      } catch (searchError) {
+        console.error(searchError)
+        if (!cancelled) {
+          setError(getErrorMessage(searchError))
+          setResults([])
+        }
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    }, 450)
+
+    return () => {
+      cancelled = true
+      window.clearTimeout(timer)
+    }
+  }, [query])
+
+  const updateQuery = (value) => {
+    setQuery(value)
+    if (value.trim().length >= 2) return
+    setResults([])
+    setError('')
+    setLoading(false)
+    setSearched(false)
+  }
+
+  const searchGames = async (nextQuery = query) => {
+    const term = nextQuery.trim()
+    if (term.length < 2) return
+
+    setLoading(true)
+    setError('')
+    setSearched(true)
+    try {
+      setResults(await fetchRawgGames(term))
+    } catch (searchError) {
+      console.error(searchError)
+      setError(getErrorMessage(searchError))
+      setResults([])
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const addGame = async (rawgGame, mode) => {
+    const key = `${rawgGame.id}-${mode}`
+    setAddingKey(key)
+    try {
+      await onAddGame(createGameFromRawg(rawgGame, mode))
+    } catch (addError) {
+      console.error(addError)
+      alert(`לא הצלחתי להוסיף: ${getErrorMessage(addError)}`)
+    } finally {
+      setAddingKey('')
+    }
+  }
+
+  return (
+    <section className="screen">
+      <header className="topbar compact">
+        <div className="brand-row">
+          <img className="brand-icon" src="/mgl.png" alt="" />
+          <div>
+            <Logo />
+            <p className="brand-sub">{t('discoverSubtitle')}</p>
+          </div>
+        </div>
+      </header>
+
+      <section className="discover-hero">
+        <span className="discover-hero-icon">
+          <Search size={25} />
+        </span>
+        <div>
+          <span>{t('search')}</span>
+          <h1>{t('searchHeroTitle')}</h1>
+          <p>{t('searchHeroBody')}</p>
+        </div>
+      </section>
+
+      <form
+        className="discover-search"
+        onSubmit={(event) => {
+          event.preventDefault()
+          searchGames()
+        }}
+      >
+          <Search size={18} />
+        <input
+          value={query}
+          onChange={(event) => updateQuery(event.target.value)}
+          placeholder={t('searchPlaceholder')}
+          autoComplete="off"
+          spellCheck="false"
+        />
+        <button type="submit" disabled={query.trim().length < 2 || loading}>
+          {loading ? `${t('search')}...` : t('search')}
+        </button>
+      </form>
+
+      <ChipRow>
+        {suggestions.map((suggestion) => (
+          <button
+            className="chip"
+            key={suggestion}
+            type="button"
+            onClick={() => {
+              updateQuery(suggestion)
+              searchGames(suggestion)
+            }}
+          >
+            {suggestion}
+          </button>
+        ))}
+      </ChipRow>
+
+      {error ? <div className="discover-error">{error}</div> : null}
+
+      {results.length ? (
+        <div className="discover-results">
+          {results.map((game) => {
+            const existing = findExistingGame(games, game)
+            return (
+              <article className="discover-card" key={game.id}>
+                {game.background_image ? (
+                  <img src={game.background_image} alt="" />
+                ) : (
+                  <span className="discover-fallback"><Gamepad2 size={28} /></span>
+                )}
+                <div className="discover-card-body">
+                  <div className="discover-card-title">
+                    <strong>{game.name}</strong>
+                    {existing ? <span>כבר אצלך</span> : null}
+                  </div>
+                  <small>{formatRawgMeta(game)}</small>
+                  <div className="discover-actions">
+                    {existing ? (
+                      <button type="button" onClick={() => onOpenGame(existing.id)}>
+                        פתח
+                      </button>
+                    ) : (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => addGame(game, 'backlog')}
+                          disabled={addingKey === `${game.id}-backlog`}
+                        >
+                          + {t('backlog')}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => addGame(game, 'want')}
+                          disabled={addingKey === `${game.id}-want`}
+                        >
+                          {t('want')}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => addGame(game, 'own')}
+                          disabled={addingKey === `${game.id}-own`}
+                        >
+                          {t('owned')}
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </div>
+              </article>
+            )
+          })}
+        </div>
+      ) : (
+        <div className="empty-state">
+          <Search size={42} />
+          <strong>{searched ? 'לא נמצאו משחקים' : 'חפש משחק להתחלה'}</strong>
+          <span>{searched ? 'נסה שם אחר או שם באנגלית.' : 'התחל להקליד ותוצאות יופיעו אוטומטית.'}</span>
+        </div>
+      )}
+    </section>
+  )
+}
+
+function StatsScreen({ games, onOpenGame, t }) {
   const owned = games.filter((game) => game.status === 'own' || game.status === 'done')
   const want = games.filter((game) => game.status === 'want')
   const done = games.filter((game) => game.status === 'done')
+  const backlog = games.filter((game) => game.backlog)
   const rated = games.filter((game) => game.stars > 0)
   const spent = owned.reduce((sum, game) => sum + (Number(game.price) || 0), 0)
   const average = rated.length
@@ -408,18 +1379,19 @@ function StatsScreen({ games, onOpenGame }) {
     <section className="screen">
       <header className="topbar compact">
         <div className="brand-row">
-          <img className="brand-icon" src="/egz.png" alt="" />
+          <img className="brand-icon" src="/mgl.png" alt="" />
           <Logo />
         </div>
       </header>
 
       <div className="stats-stack">
         <section className="panel">
-          <h2>סיכום כללי</h2>
+          <h2>{t('summaryGeneral')}</h2>
           <div className="stat-grid">
-            <StatCard value={owned.length} label="בבעלותי" />
-            <StatCard value={done.length} label="סיימתי לשחק" />
-            <StatCard value={want.length} label="רשימת רצונות" />
+            <StatCard value={owned.length} label={t('owned')} />
+            <StatCard value={done.length} label={t('done')} />
+            <StatCard value={want.length} label={t('want')} />
+            <StatCard value={backlog.length} label={t('backlog')} />
             <StatCard value={`₪${spent.toLocaleString('he-IL')}`} label="סה״כ הוצאות" />
             <StatCard value={average ? `${average} ★` : '—'} label="ממוצע דירוג" wide />
           </div>
@@ -464,6 +1436,126 @@ function StatsScreen({ games, onOpenGame }) {
   )
 }
 
+function SettingsScreen({
+  appVersion,
+  deletingAccount,
+  gamesCount,
+  language,
+  onDeleteAccount,
+  onLanguageChange,
+  onLogout,
+  t,
+  user,
+}) {
+  const initial = (user.displayName || user.email || 'E').trim().charAt(0).toUpperCase()
+  const photoURL = user.photoURL || ''
+  const [failedPhotoUrl, setFailedPhotoUrl] = useState('')
+  const photoFailed = Boolean(photoURL && failedPhotoUrl === photoURL)
+  const isGoogleUser = user.providerData?.some((provider) => provider.providerId === 'google.com')
+    || /@gmail\.com$/i.test(user.email || '')
+
+  return (
+    <section className="screen">
+      <header className="topbar compact">
+        <div className="brand-row">
+          <img className="brand-icon" src="/mgl.png" alt="" />
+          <div>
+            <Logo />
+            <p className="brand-sub">{t('settingsSubtitle')}</p>
+          </div>
+        </div>
+      </header>
+
+      <div className="settings-stack">
+        <section className="settings-profile">
+          <ProfileAvatar
+            initial={initial}
+            isGoogleUser={isGoogleUser}
+            onPhotoError={() => setFailedPhotoUrl(photoURL)}
+            photoFailed={photoFailed}
+            photoURL={photoURL}
+          />
+          <div>
+            <strong>{user.displayName || t('profileFallbackName')}</strong>
+            <small>{user.email}</small>
+          </div>
+        </section>
+
+        <section className="settings-panel">
+          <h2>{t('language')}</h2>
+          <div className="language-options" role="group" aria-label={t('language')}>
+            {languageOptions.map((option) => (
+              <button
+                className={language === option.value ? 'active' : ''}
+                key={option.value}
+                type="button"
+                onClick={() => onLanguageChange(option.value)}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+        </section>
+
+        <section className="settings-panel">
+          <h2>{t('account')}</h2>
+          <button className="settings-action" type="button" onClick={onLogout}>
+            <LogOut size={20} />
+            <span>
+              <strong>{t('logout')}</strong>
+              <small>{t('logoutDescription')}</small>
+            </span>
+          </button>
+          <button className="settings-action danger" type="button" onClick={onDeleteAccount} disabled={deletingAccount}>
+            <Trash2 size={20} />
+            <span>
+              <strong>{deletingAccount ? t('deletingAccount') : t('deleteAccount')}</strong>
+              <small>{t('deleteAccountDescription', { count: gamesCount })}</small>
+            </span>
+          </button>
+        </section>
+
+        <section className="settings-panel">
+          <h2>{t('privacy')}</h2>
+          <div className="info-row">
+            <ShieldCheck size={20} />
+            <span>{t('privacyStorage')}</span>
+          </div>
+          <div className="info-row">
+            <UserRound size={20} />
+            <span>{t('privacyAuth')}</span>
+          </div>
+        </section>
+
+        <section className="settings-panel">
+          <h2>{t('app')}</h2>
+          <div className="info-row">
+            <Info size={20} />
+            <span>{t('version', { version: appVersion })}</span>
+          </div>
+        </section>
+      </div>
+    </section>
+  )
+}
+
+function ProfileAvatar({ initial, isGoogleUser, onPhotoError, photoFailed, photoURL }) {
+  if (photoURL && !photoFailed) {
+    return (
+      <span className="settings-avatar">
+        <img src={photoURL} alt="" onError={onPhotoError} referrerPolicy="no-referrer" />
+      </span>
+    )
+  }
+
+  return (
+    <span className={isGoogleUser ? 'settings-avatar google-avatar' : 'settings-avatar'}>
+      {isGoogleUser ? 'G' : <UserRound size={27} />}
+      {isGoogleUser ? <small>Google</small> : <small>{initial}</small>}
+    </span>
+  )
+}
+
 function AddGameSheet({ onClose, onSave }) {
   const [form, setForm] = useState(createEmptyForm)
   const [results, setResults] = useState([])
@@ -504,6 +1596,9 @@ function AddGameSheet({ onClose, onSave }) {
       name: game.name,
       platform: mapRawgPlatform(game.platforms) || current.platform,
       image: game.background_image || '',
+      rawgId: game.id || '',
+      released: game.released || '',
+      rawgRating: Number(game.rating) || 0,
       dev: known?.dev || current.dev,
       tags: mapRawgGenres(game.genres).length ? mapRawgGenres(game.genres) : known?.tags || current.tags,
       icon: known?.icon || current.icon,
@@ -531,11 +1626,15 @@ function AddGameSheet({ onClose, onSave }) {
         platform: form.platform,
         price: Number(form.price) || 0,
         status: form.status,
+        backlog: form.backlog,
         dev: form.dev || 'לא ידוע',
         tags: form.tags.length ? form.tags : ['action'],
         icon: form.icon,
         bg: form.bg,
         image: form.image,
+        rawgId: form.rawgId,
+        released: form.released,
+        rawgRating: form.rawgRating,
       })
       onClose()
     } finally {
@@ -564,6 +1663,22 @@ function AddGameSheet({ onClose, onSave }) {
         </div>
       ) : null}
 
+      {form.image ? (
+        <div className="cover-preview">
+          <img src={form.image} alt="" />
+        </div>
+      ) : null}
+
+      <label className="field">
+        <span>תמונת קאבר</span>
+        <input
+          dir="ltr"
+          value={form.image}
+          onChange={(event) => update('image', event.target.value)}
+          placeholder="https://..."
+        />
+      </label>
+
       <button className="secondary-btn" type="button" onClick={smartFill} disabled={!findKnownGame(form.name)}>
         <Sparkles size={18} />
         מלא פרטים אוטומטית
@@ -590,6 +1705,18 @@ function AddGameSheet({ onClose, onSave }) {
 
       <StatusButtons value={form.status} onChange={(status) => update('status', status)} />
 
+      <label className="toggle-row">
+        <input
+          checked={form.backlog}
+          type="checkbox"
+          onChange={(event) => update('backlog', event.target.checked)}
+        />
+        <span>
+          <strong>להוסיף לבקלוג</strong>
+          <small>משחק שאני רוצה לחזור אליו אחר כך</small>
+        </span>
+      </label>
+
       <button className="primary-btn" type="button" onClick={submit} disabled={saving}>
         <Plus size={18} />
         הוסף לקטלוג
@@ -598,17 +1725,29 @@ function AddGameSheet({ onClose, onSave }) {
   )
 }
 
-function GameSheet({ game, onClose, onDelete, onSave }) {
+function GameSheet({ game, onClose, onDelete, onSave, onShare }) {
   const [form, setForm] = useState(() => ({
       stars: game.stars || 0,
       status: game.status || 'own',
+      backlog: Boolean(game.backlog),
       tags: [...(game.tags || [])],
       note: game.note || '',
       price: game.price || '',
       platform: game.platform || '',
+      dev: game.dev || '',
+      image: game.image || '',
+      released: game.released || '',
+      rawgRating: game.rawgRating || 0,
   }))
+  const [refreshing, setRefreshing] = useState(false)
 
   const update = (field, value) => setForm((current) => ({ ...current, [field]: value }))
+  const updateStatus = (status) =>
+    setForm((current) => ({
+      ...current,
+      status,
+      backlog: status === 'done' ? false : current.backlog,
+    }))
   const toggleTag = (tag) =>
     update(
       'tags',
@@ -619,15 +1758,80 @@ function GameSheet({ game, onClose, onDelete, onSave }) {
     onSave(game.id, {
       stars: form.stars,
       status: form.status,
+      backlog: form.backlog,
       tags: form.tags,
       note: form.note,
       price: Number(form.price) || 0,
       platform: form.platform,
+      dev: form.dev || 'לא ידוע',
+      image: form.image,
+      released: form.released,
+      rawgRating: Number(form.rawgRating) || 0,
     })
 
+  const refreshDetails = async () => {
+    setRefreshing(true)
+    try {
+      const response = await fetch(
+        `https://api.rawg.io/api/games?key=${RAWG_KEY}&search=${encodeURIComponent(game.name)}&page_size=1`,
+      )
+      const data = await response.json()
+      const match = data.results?.[0]
+      if (!match) return
+
+      setForm((current) => ({
+        ...current,
+        image: match.background_image || current.image,
+        platform: mapRawgPlatform(match.platforms) || current.platform,
+        released: match.released || current.released,
+        rawgRating: Number(match.rating) || current.rawgRating,
+        tags: mapRawgGenres(match.genres).length ? mapRawgGenres(match.genres) : current.tags,
+      }))
+    } catch (error) {
+      console.error(error)
+      alert(`לא הצלחתי לעדכן פרטים: ${getErrorMessage(error)}`)
+    } finally {
+      setRefreshing(false)
+    }
+  }
+
   return (
-    <BottomSheet title={game.name} subtitle={game.dev || ''} media={<GameThumb game={game} large />} onClose={onClose}>
-      <StatusButtons value={form.status} onChange={(status) => update('status', status)} />
+    <BottomSheet title={game.name} subtitle={form.dev || ''} media={<GameThumb game={{ ...game, image: form.image }} large />} onClose={onClose}>
+      <GameHero game={{ ...game, ...form }} />
+
+      <div className="sheet-actions-row">
+        <button className="secondary-btn" type="button" onClick={() => onShare({ ...game, ...form })}>
+          <Share2 size={18} />
+          שתף משחק
+        </button>
+        <button
+          className="secondary-btn"
+          type="button"
+          onClick={() => updateStatus(form.status === 'done' ? 'own' : 'done')}
+        >
+          <Check size={18} />
+          {form.status === 'done' ? 'לא שיחקתי' : 'שיחקתי'}
+        </button>
+      </div>
+
+      <button className="secondary-btn" type="button" onClick={refreshDetails} disabled={refreshing}>
+        <Sparkles size={18} />
+        {refreshing ? 'מעדכן...' : 'עדכן תמונה ופרטים'}
+      </button>
+
+      <StatusButtons value={form.status} onChange={updateStatus} />
+
+      <label className="toggle-row">
+        <input
+          checked={form.backlog}
+          type="checkbox"
+          onChange={(event) => update('backlog', event.target.checked)}
+        />
+        <span>
+          <strong>נמצא בקלוג</strong>
+          <small>אפשר לסמן אחר כך כששיחקת בו</small>
+        </span>
+      </label>
 
       <div className="stars-row" aria-label="דירוג">
         {[1, 2, 3, 4, 5].map((star) => (
@@ -655,7 +1859,21 @@ function GameSheet({ game, onClose, onDelete, onSave }) {
         <input value={form.note} onChange={(event) => update('note', event.target.value)} placeholder="הערות אישיות..." />
       </label>
 
+      <label className="field">
+        <span>תמונת קאבר</span>
+        <input
+          dir="ltr"
+          value={form.image}
+          onChange={(event) => update('image', event.target.value)}
+          placeholder="https://..."
+        />
+      </label>
+
       <div className="form-grid">
+        <label className="field">
+          <span>מפתח / סטודיו</span>
+          <input value={form.dev} onChange={(event) => update('dev', event.target.value)} placeholder="לא ידוע" />
+        </label>
         <label className="field">
           <span>מחיר ששילמת</span>
           <input value={form.price} onChange={(event) => update('price', event.target.value)} type="number" inputMode="numeric" placeholder="₪" />
@@ -684,6 +1902,32 @@ function GameSheet({ game, onClose, onDelete, onSave }) {
   )
 }
 
+function GameHero({ game }) {
+  const tags = (game.tags || []).slice(0, 3)
+  const rating = Number(game.rawgRating) || 0
+
+  return (
+    <section className="game-hero">
+      {game.image ? (
+        <img src={game.image} alt="" />
+      ) : (
+        <div className={`game-hero-fallback ${game.bg || 'bg-purple'}`}>
+          <span>{game.icon || '🎮'}</span>
+        </div>
+      )}
+      <div className="game-hero-meta">
+        {game.backlog ? <span className="meta-pill highlight">בקלוג</span> : null}
+        <span className="meta-pill">{game.platform || 'פלטפורמה'}</span>
+        {game.released ? <span className="meta-pill">{new Date(game.released).getFullYear()}</span> : null}
+        {rating ? <span className="meta-pill">{rating}/5 RAWG</span> : null}
+        {tags.map((tag) => (
+          <span className="meta-pill" key={tag}>{TAG_LABELS[tag] || tag}</span>
+        ))}
+      </div>
+    </section>
+  )
+}
+
 function BottomSheet({ children, media, onClose, subtitle, title }) {
   return (
     <div className="sheet-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
@@ -705,22 +1949,34 @@ function BottomSheet({ children, media, onClose, subtitle, title }) {
   )
 }
 
-function BottomNav({ screen, setScreen }) {
+function BottomNav({ screen, setScreen, t }) {
   return (
     <nav className="bottom-nav">
       <button className={screen === 'home' ? 'active' : ''} type="button" onClick={() => setScreen('home')}>
         <Home size={22} />
-        <span>בית</span>
+        <span>{t('home')}</span>
+      </button>
+      <button className={screen === 'backlog' ? 'active' : ''} type="button" onClick={() => setScreen('backlog')}>
+        <Bookmark size={22} />
+        <span>{t('backlog')}</span>
+      </button>
+      <button className={screen === 'discover' ? 'active' : ''} type="button" onClick={() => setScreen('discover')}>
+        <Search size={22} />
+        <span>{t('search')}</span>
       </button>
       <button className={screen === 'stats' ? 'active' : ''} type="button" onClick={() => setScreen('stats')}>
         <BarChart3 size={22} />
-        <span>סיכום</span>
+        <span>{t('summary')}</span>
+      </button>
+      <button className={screen === 'settings' ? 'active' : ''} type="button" onClick={() => setScreen('settings')}>
+        <Settings size={22} />
+        <span>{t('settings')}</span>
       </button>
     </nav>
   )
 }
 
-function GameRow({ game, onOpen }) {
+function GameRow({ game, onOpen, t }) {
   return (
     <button className="game-row" type="button" onClick={() => onOpen(game.id)}>
       <GameThumb game={game} />
@@ -736,7 +1992,8 @@ function GameRow({ game, onOpen }) {
         </span>
       </span>
       <span className="game-side">
-        <StatusBadge status={game.status} />
+        {game.backlog ? <span className="mini-badge">{t('backlog')}</span> : null}
+        <StatusBadge status={game.status} t={t} />
         {game.stars ? <small className="stars-text">{starText(game.stars)}</small> : null}
         {game.price ? <small>₪{game.price}</small> : null}
       </span>
@@ -744,19 +2001,29 @@ function GameRow({ game, onOpen }) {
   )
 }
 
-function GameCard({ game, onOpen }) {
+function GameCard({ game, onOpen, t }) {
   return (
     <button className="game-card" type="button" onClick={() => onOpen(game.id)}>
-      <GameThumb game={game} large />
-      <strong>{game.name}</strong>
-      <small>{game.platform}</small>
-      <StatusBadge status={game.status} />
+      <GameThumb game={game} cover />
+      <span className="game-card-body">
+        <strong>{game.name}</strong>
+        <small>
+          {game.platform} {game.dev ? `· ${game.dev}` : ''}
+        </small>
+        <span className="game-card-meta">
+          <span className="game-card-badges">
+            {game.backlog ? <span className="mini-badge">{t('backlog')}</span> : null}
+            <StatusBadge status={game.status} t={t} />
+          </span>
+          {game.stars ? <small className="stars-text">{starText(game.stars)}</small> : null}
+        </span>
+      </span>
     </button>
   )
 }
 
-function GameThumb({ compact, game, large }) {
-  const className = ['game-thumb', compact ? 'compact' : '', large ? 'large' : '', game.bg || 'bg-purple']
+function GameThumb({ compact, cover, game, large }) {
+  const className = ['game-thumb', compact ? 'compact' : '', cover ? 'cover' : '', large ? 'large' : '', game.bg || 'bg-purple']
     .filter(Boolean)
     .join(' ')
 
@@ -767,8 +2034,8 @@ function GameThumb({ compact, game, large }) {
   return <span className={className}>{game.icon || '🎮'}</span>
 }
 
-function StatusBadge({ status }) {
-  return <span className={`status-badge ${status || 'own'}`}>{STATUS_LABELS[status] || 'יש לי'}</span>
+function StatusBadge({ status, t = createTranslator(DEFAULT_LANGUAGE) }) {
+  return <span className={`status-badge ${status || 'own'}`}>{getStatusLabel(status || 'own', t)}</span>
 }
 
 function StatusButtons({ onChange, value }) {
@@ -812,12 +2079,271 @@ function EmptyState() {
   )
 }
 
+async function reauthenticateCurrentUser() {
+  const currentUser = auth.currentUser
+  if (!currentUser) throw new Error('אין משתמש מחובר')
+
+  if (isNativeApp()) {
+    const result = await FirebaseAuthentication.signInWithGoogle({
+      skipNativeAuth: true,
+      useCredentialManager: false,
+    })
+    const idToken = result.credential?.idToken
+    if (!idToken) throw new Error('Google לא החזיר token לאפליקציה')
+
+    const credential = GoogleAuthProvider.credential(idToken)
+    await reauthenticateWithCredential(currentUser, credential)
+    return
+  }
+
+  await reauthenticateWithPopup(currentUser, googleProvider)
+}
+
+async function deleteUserGames(userId) {
+  const gamesQuery = query(collection(db, gamesCollection), where('userId', '==', userId))
+  const snapshot = await getDocs(gamesQuery)
+  const docs = [...snapshot.docs]
+
+  while (docs.length) {
+    const batch = writeBatch(db)
+    docs.splice(0, 450).forEach((gameDoc) => batch.delete(gameDoc.ref))
+    await batch.commit()
+  }
+
+  await waitForPendingWrites(db)
+}
+
+function toShareGame(game) {
+  return {
+    name: game.name || 'משחק ללא שם',
+    platform: game.platform || '',
+    dev: game.dev || '',
+    status: game.status || 'own',
+    backlog: Boolean(game.backlog),
+    stars: Number(game.stars) || 0,
+    tags: Array.isArray(game.tags) ? game.tags.slice(0, 6) : [],
+    image: game.image || '',
+    icon: game.icon || '',
+    bg: game.bg || 'bg-purple',
+    released: game.released || '',
+    rawgRating: Number(game.rawgRating) || 0,
+    backlogOrder: Number.isFinite(getBacklogOrder(game)) ? getBacklogOrder(game) : 0,
+  }
+}
+
+async function createShareUrl(payload) {
+  const baseUrl = getShareBaseUrl()
+  const encoded = encodeShare(payload)
+
+  try {
+    const docRef = await addDoc(collection(db, sharesCollection), {
+      ...payload,
+      createdAt: serverTimestamp(),
+      snapshotCreatedAt: Date.now(),
+    })
+    return encoded.length < 6000 ? `${baseUrl}?share=${docRef.id}#share=${encoded}` : `${baseUrl}?share=${docRef.id}`
+  } catch (error) {
+    console.info('Firestore share failed, using encoded share link:', error)
+    return `${baseUrl}#share=${encoded}`
+  }
+}
+
+function getShareBaseUrl() {
+  if (isNativeApp()) return PUBLIC_WEB_URL
+  return `${window.location.origin}${window.location.pathname}`
+}
+
+async function shareUrl({ title, text, url }) {
+  if (navigator.share) {
+    await navigator.share({ title, text, url })
+    return
+  }
+
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(url)
+    return
+  }
+
+  window.prompt('העתק את הקישור', url)
+}
+
+function encodeShare(payload) {
+  const bytes = new TextEncoder().encode(JSON.stringify(payload))
+  let binary = ''
+  bytes.forEach((byte) => {
+    binary += String.fromCharCode(byte)
+  })
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+}
+
+function parseEncodedShare(encoded) {
+  const padded = encoded.replace(/-/g, '+').replace(/_/g, '/').padEnd(Math.ceil(encoded.length / 4) * 4, '=')
+  const binary = atob(padded)
+  const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0))
+  return JSON.parse(new TextDecoder().decode(bytes))
+}
+
 function Logo({ size = 'normal' }) {
   return (
     <div className={size === 'large' ? 'logo large' : 'logo'}>
-      Eran<span>Game</span><em>Zone</em>
+      My<span>Game</span><em>Log</em>
     </div>
   )
+}
+
+function normalizeGame(item) {
+  const data = item.data()
+  const backlogOrder = getBacklogOrder(data)
+  return {
+    id: item.id,
+    ...data,
+    name: typeof data.name === 'string' && data.name.trim() ? data.name : 'משחק ללא שם',
+    platform: typeof data.platform === 'string' ? data.platform : '',
+    dev: typeof data.dev === 'string' && data.dev.trim() ? data.dev : 'לא ידוע',
+    tags: Array.isArray(data.tags) ? data.tags.filter(Boolean) : [],
+    status: typeof data.status === 'string' ? data.status : 'own',
+    backlog: Boolean(data.backlog),
+    price: Number(data.price) || 0,
+    stars: Number(data.stars) || 0,
+    note: typeof data.note === 'string' ? data.note : '',
+    icon: typeof data.icon === 'string' ? data.icon : '',
+    bg: typeof data.bg === 'string' ? data.bg : 'bg-purple',
+    image: typeof data.image === 'string' ? data.image : '',
+    rawgId: data.rawgId || '',
+    released: typeof data.released === 'string' ? data.released : '',
+    rawgRating: Number(data.rawgRating) || 0,
+    backlogOrder: Number.isFinite(backlogOrder) ? backlogOrder : null,
+  }
+}
+
+function sortBacklogGames(games) {
+  return [...games].sort((a, b) => {
+    const aOrder = getBacklogOrder(a)
+    const bOrder = getBacklogOrder(b)
+    if (aOrder !== bOrder) return aOrder - bOrder
+
+    const aCreatedAt = getGameCreatedAt(a)
+    const bCreatedAt = getGameCreatedAt(b)
+    if (aCreatedAt !== bCreatedAt) return aCreatedAt - bCreatedAt
+
+    return String(a.name || '').localeCompare(String(b.name || ''), 'he')
+  })
+}
+
+function getBacklogOrder(game) {
+  if (game.backlogOrder === null || game.backlogOrder === undefined || game.backlogOrder === '') {
+    return Number.POSITIVE_INFINITY
+  }
+  const order = Number(game.backlogOrder)
+  return Number.isFinite(order) ? order : Number.POSITIVE_INFINITY
+}
+
+function getGameCreatedAt(game) {
+  if (typeof game.createdAt === 'number') return game.createdAt
+  if (typeof game.createdAt?.toMillis === 'function') return game.createdAt.toMillis()
+  return 0
+}
+
+function moveItem(items, fromIndex, toIndex) {
+  const next = [...items]
+  const [item] = next.splice(fromIndex, 1)
+  next.splice(toIndex, 0, item)
+  return next
+}
+
+function findBacklogDropTarget(clientY, sourceId) {
+  const rows = [...document.querySelectorAll('[data-backlog-id]')].filter(
+    (row) => row.dataset.backlogId !== sourceId,
+  )
+  if (!rows.length) return sourceId
+
+  return rows.reduce((best, row) => {
+    const rect = row.getBoundingClientRect()
+    const distance = Math.abs(clientY - (rect.top + rect.height / 2))
+    if (!best || distance < best.distance) {
+      return { id: row.dataset.backlogId, distance }
+    }
+    return best
+  }, null)?.id
+}
+
+async function fetchRawgGames(term) {
+  const response = await fetch(
+    `https://api.rawg.io/api/games?key=${RAWG_KEY}&search=${encodeURIComponent(term)}&page_size=12`,
+  )
+  const data = await response.json()
+  if (!response.ok) throw new Error(data?.detail || 'החיפוש נכשל')
+  return data.results || []
+}
+
+function createGameFromRawg(rawgGame, mode) {
+  const known = findKnownGame(rawgGame.name || '')
+  const fallback = getFallbackIcon()
+  const mappedTags = mapRawgGenres(rawgGame.genres)
+  const status = mode === 'want' ? 'want' : 'own'
+
+  return {
+    name: rawgGame.name || 'משחק ללא שם',
+    platform: mapRawgPlatform(rawgGame.platforms) || PLATFORMS[0],
+    price: 0,
+    status,
+    backlog: mode === 'backlog',
+    dev: known?.dev || 'לא ידוע',
+    tags: mappedTags.length ? mappedTags : known?.tags || ['action'],
+    icon: known?.icon || fallback.icon,
+    bg: known?.bg || fallback.bg,
+    image: rawgGame.background_image || '',
+    rawgId: rawgGame.id || '',
+    released: rawgGame.released || '',
+    rawgRating: Number(rawgGame.rating) || 0,
+  }
+}
+
+function findExistingGame(games, rawgGame) {
+  const rawgId = rawgGame.id ? String(rawgGame.id) : ''
+  const rawgName = String(rawgGame.name || '').trim().toLowerCase()
+  return games.find((game) => {
+    const gameRawgId = game.rawgId ? String(game.rawgId) : ''
+    const gameName = String(game.name || '').trim().toLowerCase()
+    return (rawgId && gameRawgId === rawgId) || (rawgName && gameName === rawgName)
+  })
+}
+
+function formatRawgMeta(game) {
+  const year = game.released ? new Date(game.released).getFullYear() : ''
+  const platform = mapRawgPlatform(game.platforms) || (game.platforms || [])[0]?.platform?.name || ''
+  const rating = Number(game.rating) ? `${Number(game.rating).toFixed(1)}/5 RAWG` : ''
+  return [platform, year, rating].filter(Boolean).join(' · ') || 'פרטים לא זמינים'
+}
+
+function getErrorMessage(error) {
+  if (!error) return 'שגיאה לא ידועה'
+  if (typeof error === 'string') return error
+  return error.message || String(error)
+}
+
+function getLanguageConfig(value) {
+  return languageOptions.find((option) => option.value === value) || languageOptions[0]
+}
+
+function createTranslator(language) {
+  const dictionary = translations[language] || translations[DEFAULT_LANGUAGE]
+  const fallback = translations[DEFAULT_LANGUAGE]
+
+  return (key, params = {}) => {
+    const value = dictionary[key] ?? fallback[key] ?? key
+    return typeof value === 'function' ? value(params) : value
+  }
+}
+
+function getStatusLabel(status, t) {
+  if (status === 'want') return t('want')
+  if (status === 'done') return t('done')
+  return t('owned')
+}
+
+function isNativeApp() {
+  return Boolean(window.Capacitor?.isNativePlatform?.())
 }
 
 function createEmptyForm() {
@@ -827,9 +2353,13 @@ function createEmptyForm() {
     platform: '',
     price: '',
     status: 'own',
+    backlog: false,
     dev: 'לא ידוע',
     tags: ['action'],
     image: '',
+    rawgId: '',
+    released: '',
+    rawgRating: 0,
     icon: fallback.icon,
     bg: fallback.bg,
   }
