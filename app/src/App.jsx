@@ -29,7 +29,6 @@ import {
 import {
   BarChart3,
   Bell,
-  Bookmark,
   Check,
   ChevronDown,
   Eye,
@@ -81,7 +80,7 @@ const defaultPrivacy = {
   shareListWithFriends: false,
   shareBacklogWithFriends: false,
 }
-const PUBLIC_WEB_URL = 'https://erangamezone.netlify.app/'
+const PUBLIC_WEB_URL = 'https://mglog.netlify.app/'
 const DEFAULT_LANGUAGE = 'he'
 const languageOptions = [
   { value: 'he', label: 'עברית', dir: 'rtl', lang: 'he' },
@@ -1443,7 +1442,7 @@ function BacklogScreen({ games, onMarkPlayed, onOpenGame, onReorderBacklog, onSh
 
       <section className="backlog-hero">
         <span className="backlog-hero-icon">
-          <Bookmark size={24} />
+          <List size={24} />
         </span>
         <div>
           <span>{t('backlog')}</span>
@@ -1529,7 +1528,7 @@ function BacklogScreen({ games, onMarkPlayed, onOpenGame, onReorderBacklog, onSh
         </div>
       ) : (
         <div className="empty-state">
-          <Bookmark size={42} />
+          <List size={42} />
           <strong>{t('backlogEmpty')}</strong>
           <span>{t('backlogEmptyHint')}</span>
         </div>
@@ -2088,7 +2087,7 @@ function FriendLibraryScreen({
           onClick={() => setView('backlog')}
           disabled={!canViewBacklog}
         >
-          <Bookmark size={17} />
+          <List size={17} />
           {t('backlog')}
         </button>
       </div>
@@ -2797,7 +2796,7 @@ function BottomNav({ screen, setScreen, t }) {
         <span>{t('home')}</span>
       </button>
       <button className={screen === 'backlog' ? 'active' : ''} type="button" onClick={() => setScreen('backlog')}>
-        <Bookmark size={22} />
+        <List size={22} />
         <span>{t('backlog')}</span>
       </button>
       <button className={screen === 'friends' ? 'active' : ''} type="button" onClick={() => setScreen('friends')}>
